@@ -1,0 +1,11 @@
+{
+  "vault": "~/Projects/second-brain",
+  "research": "~/Projects/research",
+  "state_dir": "surfaces/steward",
+  "stale_days": 60,
+  "load_bearing_inbound": 5,
+  "decision_window_days": 30,
+  "git_window_days": 7,
+  "max_items": 5,
+  "kete_aronui": "~/claudecode/kete-aronui"
+}

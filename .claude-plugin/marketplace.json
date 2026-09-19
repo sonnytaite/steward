@@ -1,0 +1,16 @@
+{
+  "name": "steward-plugin",
+  "owner": { "name": "Sonny Taite" },
+  "description": "Home marketplace for the steward plugin.",
+  "plugins": [
+    {
+      "name": "steward",
+      "source": "./",
+      "description": "One strong model with memory over a second brain: a weekly 'what needs you' brief (/steward:brief) and deliberation as group work (/steward:convene).",
+      "version": "0.1.0",
+      "author": { "name": "Sonny Taite" },
+      "license": "MIT",
+      "keywords": ["second-brain", "personal-agent", "steward"]
+    }
+  ]
+}

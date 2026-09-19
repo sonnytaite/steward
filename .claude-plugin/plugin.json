@@ -1,0 +1,9 @@
+{
+  "name": "steward",
+  "displayName": "Steward",
+  "version": "0.1.0",
+  "description": "One strong model with memory over a second brain: a weekly 'what needs you' brief refuted by a read-only critic and gated by keep / act / drop (/steward:brief), and deliberation as group work with a dissenter the group cannot persuade (/steward:convene). Deterministic rails, append-only state in the vault, shield enforced in code.",
+  "author": { "name": "Sonny Taite", "url": "https://github.com/sonnytaite" },
+  "license": "MIT",
+  "keywords": ["second-brain", "personal-agent", "steward", "knowledge", "human-in-the-loop"]
+}
