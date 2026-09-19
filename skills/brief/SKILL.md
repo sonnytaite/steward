@@ -49,7 +49,7 @@ Spawn the `steward-critic` agent with the draft and the facts path. It is read-o
 
 ## 4. Write, show, gate
 
-Write the brief to `<vault>/surfaces/steward/briefs/<date>-brief.md`. Present it in conversation, leading with "First".
+Write the brief to `<vault>/surfaces/steward/briefs/<date>-brief.md`. If that file already exists (a brief was written by hand or by an earlier run today), do not overwrite it: write `<date>-brief-2.md` (then `-3`, and so on) and say so. Present it in conversation, leading with "First".
 
 Interactive: ask for verdicts with AskUserQuestion, batched (one multiSelect question for **act**, one for **drop**; everything else is **keep**). Record each with:
 

@@ -11,7 +11,9 @@ mkdir -p "$VAULT/surfaces/steward/briefs"
 {
   echo "== $(date -u +%FT%TZ) steward-weekly start"
   python3 "$ROOT/rails/steward.py" --config "$ROOT/steward.config.json" brief --save >/dev/null && echo "facts saved for $DATE"
-  if command -v claude >/dev/null 2>&1; then
+  if [[ -f "$VAULT/surfaces/steward/briefs/$DATE-brief.md" && -z "${STEWARD_FORCE:-}" ]]; then
+    echo "brief for $DATE already exists; headless pass skipped"
+  elif command -v claude >/dev/null 2>&1; then
     cd "$VAULT" && claude -p "/steward:brief --headless --date $DATE" --allowedTools "Read,Grep,Glob,Bash(python3 *),Agent,Write" 2>&1 | tail -20
     echo "headless pass exit: $?"
   else
