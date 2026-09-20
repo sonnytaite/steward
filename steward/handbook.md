@@ -50,3 +50,4 @@ Drops teach as much as acts. Before composing, read the disposition tally in the
 ## Changelog
 
 - 2026-09-20: first version, written after the first vault scan and the Navier-Stokes reading (convene, not swarm).
+- 2026-09-20: first brief disposed (4 act, 1 keep). Learned: links inside inline code are not links (rails fixed, test added); the critic's cheaper-action check earned its place (3 of 5 items amended).

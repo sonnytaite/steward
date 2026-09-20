@@ -152,6 +152,10 @@ class FactsTests(Fixture):
         self.assertNotIn("concepts/hub\\", {r["target"] for r in f["broken_links"]})
         self.assertIn("concepts/hub", steward.load_pages(self.cfg)["projects/esc"]["links"])
 
+    def test_link_inside_inline_code_is_not_a_link(self):
+        (self.vault / "wiki" / "concepts" / "code.md").write_text(page("Code", "2026-09-15", body="prose about `[[wiki-links]]` syntax"))
+        self.assertNotIn("wiki-links", {r["target"] for r in self.facts()["broken_links"]})
+
     def test_settled_decisions_skipped(self):
         heads = [d["heading"] for d in self.facts()["research_decisions"]]
         self.assertEqual(heads, ["Decisions for Sonny"])

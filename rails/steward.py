@@ -142,7 +142,7 @@ def load_pages(cfg: dict) -> dict:
         fm, raw, body = parse_frontmatter(text)
         mode, visible = shield_page(fm, raw, body, cfg["shield_markers"])
         related = fm.get("related", []) if isinstance(fm.get("related"), list) else []
-        links = set(related) | set(LINK_RE.findall(visible))
+        links = set(related) | set(LINK_RE.findall(re.sub(r"`[^`\n]*`", "", visible)))
         links.discard(rel)
         pages[rel] = {
             "path": rel,
