@@ -10,6 +10,7 @@ LOG="$VAULT/surfaces/steward/weekly.log"
 mkdir -p "$VAULT/surfaces/steward/briefs"
 {
   echo "== $(date -u +%FT%TZ) steward-weekly start"
+  python3 "$ROOT/rails/concierge.py" --config "$ROOT/steward.config.json" crawl >/dev/null && python3 "$ROOT/rails/concierge.py" --config "$ROOT/steward.config.json" console >/dev/null && echo "concierge refreshed"
   python3 "$ROOT/rails/steward.py" --config "$ROOT/steward.config.json" brief --save >/dev/null && echo "facts saved for $DATE"
   if [[ -f "$VAULT/surfaces/steward/briefs/$DATE-brief.md" && -z "${STEWARD_FORCE:-}" ]]; then
     echo "brief for $DATE already exists; headless pass skipped"

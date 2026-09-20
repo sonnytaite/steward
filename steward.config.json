@@ -7,5 +7,34 @@
   "decision_window_days": 30,
   "git_window_days": 7,
   "max_items": 5,
-  "kete_aronui": "~/claudecode/kete-aronui"
+  "kete_aronui": "~/claudecode/kete-aronui",
+  "concierge_roots": [
+    "~/Projects"
+  ],
+  "concierge_skip": [
+    "research",
+    "second-brain",
+    "vault-personal",
+    "healthx-commons",
+    "healthX",
+    "og-docs",
+    "paperclip-agent-configs"
+  ],
+  "concierge_include": [
+    "steward",
+    "surface-plugin",
+    "kete-aronui",
+    "tars",
+    "keeper-environmental-intelligence-platform"
+  ],
+  "concierge_stages": [
+    "idea",
+    "spec",
+    "prototype",
+    "harness",
+    "sandbox",
+    "pilot",
+    "production",
+    "parked"
+  ]
 }

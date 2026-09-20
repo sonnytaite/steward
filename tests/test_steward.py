@@ -217,5 +217,25 @@ class StateTests(Fixture):
         self.assertTrue((b / "2026-09-20-facts.md").exists())
 
 
+class ConciergeTests(Fixture):
+    def _mod(self):
+        spec = importlib.util.spec_from_file_location("concierge", HERE.parent / "rails" / "concierge.py")
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
+
+    def test_note_then_drift(self):
+        m = self._mod(); sd = self.vault / "surfaces" / "steward" / "concierge"; sd.mkdir(parents=True)
+        (sd / "registry.json").write_text(json.dumps({"entries": [
+            {"id": "a", "is_agent": True, "last_commit": "2026-09-15"},
+            {"id": "b", "is_agent": True, "last_commit": "2026-07-01"},
+            {"id": "c", "is_agent": False, "last_commit": "2026-09-15"}]}))
+        (sd / "overlay.json").write_text(json.dumps({"a": {"updated": "2026-09-01", "next": "x"}, "b": {"updated": "2026-09-10", "next": "ship"}}))
+        d = {x["id"]: x["kind"] for x in m.compute_drift(self.cfg, TODAY)}
+        self.assertEqual(d, {"a": "stale-record", "b": "idle-with-next"})
+
+    def test_brief_facts_carry_drift(self):
+        self.test_note_then_drift()
+        self.assertIn("registry_drift", steward.build_facts(self.cfg, TODAY))
+
+
 if __name__ == "__main__":
     unittest.main()

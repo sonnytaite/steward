@@ -260,6 +260,16 @@ def pending_verdicts(sd: Path) -> dict | None:
     return {"brief": date, "items": items, "pending": pend}
 
 
+def _registry_drift(cfg: dict, today: dt.date) -> list:
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("concierge", Path(__file__).resolve().parent / "concierge.py")
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod.compute_drift(cfg, today)[:12]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def build_facts(cfg: dict, today: dt.date | None = None) -> dict:
     today = today or dt.date.today()
     pages = load_pages(cfg)
@@ -332,6 +342,7 @@ def build_facts(cfg: dict, today: dt.date | None = None) -> dict:
         "ordinary_sample": ordinary,
         "prior": {"dispositions": prior_dispositions(sd)["tally"], "pending": pending_verdicts(sd)},
         "kete_aronui": {"path": str(kete), "present": kete.exists()},
+        "registry_drift": _registry_drift(cfg, today),
         "bounds": {"max_items": cfg["max_items"], "read_budget_files": 12, "passes": 1},
     }
     return facts
@@ -361,6 +372,7 @@ def facts_markdown(f: dict) -> str:
         if a:
             out.extend(f"    - {s}" for s in a["subjects"][:6])
     out.append("")
+    sec("Registry drift (concierge)", f.get("registry_drift", []), lambda r: f"- {r['id']} · {r['kind']} · {r['detail']}")
     sec("Recent pages", f["recent"], lambda r: f"- {r['path']} · created {r['created']} · updated {r['updated']}")
     sec("Ordinary-stream sample (re-read; keeps judgement live)", f["ordinary_sample"], lambda r: f"- {r['path']} · updated {r['updated']} · inbound {r['inbound']}")
     sec("Orphans (no inbound links)", f["orphans"], lambda r: f"- {r['path']}")

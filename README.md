@@ -8,7 +8,8 @@
   second brain (vault, git)
   ├─ surface plugin      ✔ capture · weave · share · scan
   ├─ ★ steward           ○ brief  (what needs you, weekly)
-  │                      ○ convene (deliberation as group work)
+  │                      ✔ convene (deliberation as group work)
+  │                      ✔ concierge (registry of agents + console)
   │     rails/steward.py ✔ facts · wake · dispose · log · shield
   │     agents           ✔ critic (read-only) · dissenter (read-only)
   │     state            → surfaces/steward/ in the vault
@@ -35,6 +36,7 @@ Design notes: `~/Projects/research/multi-model-synthesis/` (why one model, why t
 ```
 /steward:brief                 # weekly: what needs you, then keep / act / drop
 /steward:convene <question>    # deliberation as group work, then gate
+/steward:concierge [agent]     # where did I get to; registry + console (~/Desktop/Concierge.html)
 python3 rails/steward.py brief --save      # facts only
 python3 rails/steward.py wake              # bounded wake bundle
 python3 rails/steward.py shield-audit      # what the shield covers, and how
@@ -49,6 +51,10 @@ claude plugin install steward@steward-plugin
 ```
 
 Weekly run: `bin/steward-weekly.sh` saves the facts, attempts a headless brief with `claude -p`, and commits `surfaces/steward/`. `bin/com.ogworks.steward.plist` schedules it for Monday 07:00 (`launchctl load ~/Library/LaunchAgents/com.ogworks.steward.plist`; `unload` to stop).
+
+## Concierge
+
+The agent that keeps track of the agents (the Dell debrief's concierge, at personal scale). `rails/concierge.py crawl` derives a registry of every repo and agent under the configured roots from git, READMEs, handovers and wiki mentions; `note` records Sonny's own account (stage, where he was going, next step, how to run) in an overlay the crawler never touches; `console` renders a standalone local HTML console (agents by stage, what moved, research streams, themes, insights, drift); `where <agent>` answers "where did I get to"; `drift` feeds the weekly brief. State: `<vault>/surfaces/steward/concierge/`.
 
 ## The three layers
 

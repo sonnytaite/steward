@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concierge</title>
+<style>
+:root{color-scheme:light dark;--bg:#faf9f6;--panel:#fff;--ink:#1d1d1b;--muted:#5f5e59;--rule:#e3e1da;--accent:#1f5f7a;--soft:#e6f0f4;--warn:#8a6d1f;--warnsoft:#f7efd6;--ok:#2f6b3a;--oksoft:#e4f1e6;--code:#f1efe9}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--panel:#1f1f1c;--ink:#ebe9e2;--muted:#a8a59b;--rule:#34332f;--accent:#7fb7d3;--soft:#1e2c33;--warn:#e0c069;--warnsoft:#33301f;--ok:#8fd19a;--oksoft:#1f2f22;--code:#24241f}}
+*{box-sizing:border-box}html{background:var(--bg)}body{margin:0;padding:0 16px 48px;color:var(--ink);background:var(--bg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 24px;padding:22px 0 12px;border-bottom:1px solid var(--rule)}
+h1{font-size:24px;margin:0}.gen{color:var(--muted);font-size:13px}
+nav{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}nav button{border:1px solid var(--rule);background:var(--panel);color:var(--ink);padding:6px 12px;border-radius:999px;cursor:pointer;font-size:14px}
+nav button.on{background:var(--accent);color:#fff;border-color:var(--accent)}nav .badge{margin-left:6px;background:var(--warnsoft);color:var(--warn);padding:0 7px;border-radius:999px;font-size:12px}
+input.search{width:100%;max-width:520px;padding:8px 12px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);color:var(--ink);font-size:14px;margin:4px 0 14px}
+.lead{font-size:16px;margin:10px 0 18px}
+h2{font-size:17px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:12px 14px;cursor:pointer}.card:hover{border-color:var(--accent)}
+.card h3{margin:0 0 4px;font-size:15px}.card .meta{font-size:12.5px;color:var(--muted)}.card p{margin:6px 0 0;font-size:13.5px}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:999px;background:var(--soft);color:var(--accent);margin-right:4px}
+.tag.warn{background:var(--warnsoft);color:var(--warn)}.tag.ok{background:var(--oksoft);color:var(--ok)}
+.stale{border-left:4px solid var(--warn)}.fresh{border-left:4px solid var(--ok)}
+#detail{position:fixed;top:0;right:0;width:min(640px,100%);height:100%;overflow:auto;background:var(--panel);border-left:1px solid var(--rule);padding:22px 24px 48px;box-shadow:-8px 0 30px rgba(0,0,0,.15);display:none}
+#detail.open{display:block}#detail .close{float:right;border:none;background:none;font-size:22px;cursor:pointer;color:var(--muted)}
+#detail h2{text-transform:none;letter-spacing:0;color:var(--ink);font-size:20px;margin:0 0 6px}#detail h4{margin:16px 0 4px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+pre,code{font:12.5px ui-monospace,Menlo,monospace;background:var(--code);border-radius:6px}pre{padding:10px;overflow:auto;white-space:pre-wrap}code{padding:1px 5px}
+ul.plain{padding-left:18px;margin:4px 0}li{margin:2px 0}.muted{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{border-top:1px solid var(--rule);padding:6px 8px;text-align:left;vertical-align:top}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:13.5px}
+@media print{#detail{position:static;width:auto;box-shadow:none}}
+</style>
+</head>
+<body>
+<header><h1>Concierge</h1><span class="gen" id="gen"></span><span class="gen">the agent that keeps track of the agents · local, derived from git, READMEs, handovers and the vault · overlay in your words</span></header>
+<nav id="nav"></nav>
+<input class="search" id="q" placeholder="filter by name, artefact, project, word…">
+<div id="view"></div>
+<aside id="detail"><button class="close" onclick="closeDetail()">×</button><div id="detailBody"></div></aside>
+<script>
+const D = /*__DATA__*/null;
+const views = ["agents","moved","streams","themes","insights","drift"];
+let cur = "agents", q = "";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const days = d => d ? Math.round((new Date(D.generated.slice(0,10)) - new Date(d)) / 86400000) : null;
+function ov(id){ return D.overlay[id] || {}; }
+function stageOf(e){ const o = ov(e.id); if (o.stage) return o.stage; return e.is_agent ? "unrecorded" : "repo"; }
+function nav(){ $("#nav").innerHTML = views.map(v => `<button class="${v===cur?'on':''}" onclick="go('${v}')">${v}${v==='drift'&&D.drift.length?`<span class=badge>${D.drift.length}</span>`:''}</button>`).join(""); }
+function go(v){ cur = v; nav(); render(); }
+function match(o){ if(!q) return true; return JSON.stringify(o).toLowerCase().includes(q.toLowerCase()); }
+function card(e){ const o = ov(e.id), d = days(e.last_commit), cls = d>30?'stale':(d<=7?'fresh':'');
+  return `<div class="card ${cls}" onclick="detail('${e.id}')"><h3>${esc(e.title.length>60?e.id:e.title)}</h3><div class=meta>${esc(e.id)} · last ${esc(e.last_commit)} (${d}d) · ${e.commits} commits${e.commits_7d?` · <b>${e.commits_7d} this week</b>`:''}</div>
+  <div style="margin-top:6px">${e.artefacts.map(a=>`<span class=tag>${esc(a)}</span>`).join("")}${e.code?'<span class=tag>code</span>':''}${o.stage?`<span class="tag ok">${esc(o.stage)}</span>`:'<span class="tag warn">no record</span>'}</div>
+  <p>${esc(o.next ? "Next: "+o.next : (e.summary||"").slice(0,180))}</p></div>`; }
+function renderAgents(){ const groups = {}; for (const s of [...D.stages,"unrecorded","repo"]) groups[s]=[];
+  for (const e of D.registry.filter(match)) (groups[stageOf(e)] ||= []).push(e);
+  let h = `<p class=lead>${D.registry.filter(e=>e.is_agent).length} agents and harnesses across ${D.registry.length} repos. Cards with a green edge moved this week; amber edge is 30+ days idle. Click a card for where you got to.</p>`;
+  for (const [s, list] of Object.entries(groups)) { if(!list.length) continue; list.sort((a,b)=> (b.last_commit||"").localeCompare(a.last_commit||""));
+    h += `<h2>${esc(s)} <span class=muted>(${list.length})</span></h2><div class=grid>${list.map(card).join("")}</div>`; }
+  return h; }
+function renderMoved(){ return `<p class=lead>Commits in the last seven days.</p><h2>research</h2><ul class=plain>${D.moved.research.filter(match).map(s=>`<li>${esc(s)}</li>`).join("")}</ul><h2>vault</h2><ul class=plain>${D.moved.vault.filter(match).map(s=>`<li>${esc(s)}</li>`).join("")}</ul>`; }
+function renderStreams(){ return `<p class=lead>Every research project from the master index, as it stands.</p><table><tr><th>Project</th><th>Status</th><th>Gist</th></tr>${D.streams.filter(match).map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${esc(s.status)}</td><td>${esc(s.gist)}</td></tr>`).join("")}</table>`; }
+function renderThemes(){ return `<p class=lead>Connection pages from the vault scan: the ideas that link projects.</p><div class=grid>${D.themes.filter(match).map(t=>`<div class=card><h3>${esc(t.title)}</h3><div class=meta>${esc(t.status)}</div><p class=muted>${t.related.slice(0,8).map(r=>`<code>${esc(r)}</code>`).join(" ")}</p></div>`).join("")}</div>`; }
+function renderInsights(){ return `<p class=lead>The bold first sentence of every key finding, newest project first.</p><table><tr><th>Date</th><th>Project</th><th>Insight</th></tr>${D.insights.filter(match).map(i=>`<tr><td class=muted>${esc(i.date)}</td><td>${esc(i.project)}</td><td>${esc(i.insight)}</td></tr>`).join("")}</table>`; }
+function renderDrift(){ return `<p class=lead>Where the record and the code disagree. The steward raises these in the weekly brief.</p><table><tr><th>Agent</th><th>Kind</th><th>Detail</th></tr>${D.drift.filter(match).map(d=>`<tr><td><a href="#" onclick="detail('${d.id}');return false">${esc(d.id)}</a></td><td>${esc(d.kind)}</td><td>${esc(d.detail)}</td></tr>`).join("")}</table>`; }
+function render(){ $("#view").innerHTML = ({agents:renderAgents,moved:renderMoved,streams:renderStreams,themes:renderThemes,insights:renderInsights,drift:renderDrift})[cur](); }
+function detail(id){ const e = D.registry.find(x=>x.id===id); if(!e) return; const o = ov(id);
+  $("#detailBody").innerHTML = `<h2>${esc(e.title)}</h2><div class=muted>${esc(e.id)} · <code>${esc(e.path)}</code></div>
+  <div class=kv style="margin-top:12px"><b>Stage</b><span>${esc(o.stage||"unrecorded")}${e.declared_stage?` <span class=muted>(README says: ${esc(e.declared_stage)})</span>`:''}</span><b>Last commit</b><span>${esc(e.last_commit)} (${days(e.last_commit)} days ago) · ${e.commits} total · ${e.commits_30d} in 30 days</span><b>Artefacts</b><span>${esc(e.artefacts.join(", ")||"none")}${e.code?", code":""}</span><b>Record</b><span>${o.updated?`${esc(o.updated)} by ${esc(o.by||"")}`:"none yet"}</span></div>
+  <h4>What it is</h4><p>${esc(e.summary||"(no README summary)")}</p>
+  <h4>Where I was going</h4><p>${esc(o.going||"—")}</p><h4>Next step</h4><p>${esc(o.next||"—")}</p>${o.notes?`<h4>Notes</h4><p>${esc(o.notes)}</p>`:''}
+  <h4>How to run</h4>${(o.run||e.how_to_run.join("\n\n"))?`<pre>${esc(o.run||e.how_to_run.join("\n\n"))}</pre>`:'<p class=muted>not recorded</p>'}
+  <h4>Research</h4><p>${(e.research_projects||[]).map(r=>`<code>${esc(r)}</code>`).join(" ")||"—"}${e.latest_handover?`<br>latest handover: <code>${esc(e.latest_handover)}</code>`:''}</p>
+  <h4>Wiki</h4><p>${(e.wiki_pages||[]).map(w=>`<code>${esc(w)}</code>`).join(" ")||"—"}</p>
+  <h4>Recent commits</h4><ul class=plain>${e.recent.map(s=>`<li>${esc(s)}</li>`).join("")}</ul>
+  <h4>Update the record</h4><pre>python3 ~/Projects/steward/rails/concierge.py note --agent ${esc(e.id)} --stage "…" --going "…" --next "…"\npython3 ~/Projects/steward/rails/concierge.py console</pre>`;
+  $("#detail").classList.add("open"); }
+function closeDetail(){ $("#detail").classList.remove("open"); }
+$("#gen").textContent = "generated " + D.generated; $("#q").addEventListener("input", e => { q = e.target.value; render(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetail(); });
+nav(); render();
+</script>
+</body>
+</html>

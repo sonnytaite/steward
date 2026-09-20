@@ -40,6 +40,10 @@ When a question deserves deliberation rather than an answer, `/steward:convene` 
 
 Two sessions may run the steward on one vault, because briefs are per date and dispositions and the log are append-only. Acts are the risk. If the wake bundle shows `IN-FLIGHT` (a brief that is not yet disposed), do not act: collect the verdicts for that brief first, or stop. Before any act, re-read the file you are about to change; another session may have landed the same change since the facts were computed (2026-09-21: the convene session put the review rule into the SDLC README while a brief session was about to act on the same item; the brief session re-read and cited it instead).
 
+## Concierge
+
+The Dell debrief's concierge agent, at personal scale: the agent that keeps track of the agents so the owner does not have to. Three things, in order of trust: a **registry** derived from exhaust (git, READMEs, handovers, wiki pages) and never hand-edited; an **overlay** in Sonny's words (stage on the rung ladder, where he was going, the next step, how to run it), edited only through the gate; a **console**, local HTML, that is a view of both. The weekly brief raises **registry drift**: agents whose code moved after their record, agents with no record, agents idle thirty days with an open next step. `/steward:concierge <agent>` answers "where did I get to" and proposes a record. The registry is the personal version of the enterprise agent registration NCACP wants; what it needs to be useful here is what the HNZ one will need.
+
 ## Bounds
 
 - Items: five. Files opened: twelve. Passes: one. Convene: five framings, two rounds.
@@ -58,3 +62,4 @@ Drops teach as much as acts. Before composing, read the disposition tally in the
 - 2026-09-21: second brief disposed (4 act, 1 keep). Learned: a convening run between facts and gate can change an item; re-read items against `surfaces/steward/convenings/` before asking. The critic caught a backlink claim on the one file outside the twelve opened; cite only what was opened.
 
 - 2026-09-21: convene ran for the first time (reach versus human-in-stream; dissenter amended 4 of 7 clauses). Two stewards ran at once; added the one-steward-at-a-time rule and the IN-FLIGHT wake flag. The other session caught a wording error in the experiment write-up, which is doer-is-not-judge working across sessions.
+- 2026-09-21: concierge added (registry, overlay, console, where, drift); first records for pia-plus, worx-ai-triage, hx-door drafted from evidence for Sonny to correct; console linked from the Desktop; weekly job refreshes it.
