@@ -202,6 +202,14 @@ class StateTests(Fixture):
         self.assertLessEqual(len(out), 402)
         self.assertIn("wake truncated", out)
 
+    def test_wake_flags_in_flight_brief(self):
+        sd = self.vault / "surfaces" / "steward" / "briefs"; sd.mkdir(parents=True)
+        (sd / "2026-09-21-brief.md").write_text("# What needs you\n\n> steward brief · 2 items · status: awaiting-disposition\n\n### 1. A\n\n### 2. B\n")
+        out = self.run_cli("wake")
+        self.assertIn("IN-FLIGHT", out)
+        (sd / "2026-09-21-brief.md").write_text("# What needs you\n\n> steward brief · 2 items · status: disposed (2 act)\n\n### 1. A\n\n### 2. B\n")
+        self.assertNotIn("IN-FLIGHT", self.run_cli("wake"))
+
     def test_brief_save_writes_facts_files(self):
         self.run_cli("brief", "--save", "--date", "2026-09-20")
         b = self.vault / "surfaces" / "steward" / "briefs"

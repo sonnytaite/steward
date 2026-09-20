@@ -36,6 +36,10 @@ Every item gets a verdict from Sonny: **keep** (noted, do nothing), **act** (do 
 
 When a question deserves deliberation rather than an answer, `/steward:convene` runs it as group work: three to five framings of the same strong model work concurrently on one shared workspace, read each other after the first round and revise, a dissenter whose only job is to argue the emerging consensus is wrong, and a consolidation that keeps the disagreement trail. Then the gate. Bounds: five framings, two rounds, eight file reads per framing. Convene is for deliberation points (assessment, review, triage, research questions), never for execution loops.
 
+## One steward at a time
+
+Two sessions may run the steward on one vault, because briefs are per date and dispositions and the log are append-only. Acts are the risk. If the wake bundle shows `IN-FLIGHT` (a brief that is not yet disposed), do not act: collect the verdicts for that brief first, or stop. Before any act, re-read the file you are about to change; another session may have landed the same change since the facts were computed (2026-09-21: the convene session put the review rule into the SDLC README while a brief session was about to act on the same item; the brief session re-read and cited it instead).
+
 ## Bounds
 
 - Items: five. Files opened: twelve. Passes: one. Convene: five framings, two rounds.
@@ -52,3 +56,5 @@ Drops teach as much as acts. Before composing, read the disposition tally in the
 - 2026-09-20: first version, written after the first vault scan and the Navier-Stokes reading (convene, not swarm).
 - 2026-09-20: first brief disposed (4 act, 1 keep). Learned: links inside inline code are not links (rails fixed, test added); the critic's cheaper-action check earned its place (3 of 5 items amended).
 - 2026-09-21: second brief disposed (4 act, 1 keep). Learned: a convening run between facts and gate can change an item; re-read items against `surfaces/steward/convenings/` before asking. The critic caught a backlink claim on the one file outside the twelve opened; cite only what was opened.
+
+- 2026-09-21: convene ran for the first time (reach versus human-in-stream; dissenter amended 4 of 7 clauses). Two stewards ran at once; added the one-steward-at-a-time rule and the IN-FLIGHT wake flag. The other session caught a wording error in the experiment write-up, which is doer-is-not-judge working across sessions.

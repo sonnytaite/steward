@@ -414,6 +414,12 @@ def cmd_wake(a, cfg):
     if ident.exists():
         parts += [ident.read_text(encoding="utf-8").strip(), ""]
     pend = pending_verdicts(sd)
+    briefs = sorted((sd / "briefs").glob("*-brief*.md"))
+    if briefs:
+        head = briefs[-1].read_text(encoding="utf-8").splitlines()[:4]
+        status = next((l for l in head if "status:" in l), "")
+        if status and "disposed" not in status:
+            parts.append(f"IN-FLIGHT: {briefs[-1].name} is not disposed ({status.split('status:')[-1].strip()[:60]}). Another steward may be acting on it. Do not act until it is disposed; collect verdicts first or stop.")
     if pend:
         parts.append(f"Last brief: {pend['brief']} · items: " + "; ".join(f"{i+1}. {t}" for i, t in enumerate(pend['items'])))
         if pend["pending"]:
