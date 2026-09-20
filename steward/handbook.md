@@ -51,3 +51,4 @@ Drops teach as much as acts. Before composing, read the disposition tally in the
 
 - 2026-09-20: first version, written after the first vault scan and the Navier-Stokes reading (convene, not swarm).
 - 2026-09-20: first brief disposed (4 act, 1 keep). Learned: links inside inline code are not links (rails fixed, test added); the critic's cheaper-action check earned its place (3 of 5 items amended).
+- 2026-09-21: second brief disposed (4 act, 1 keep). Learned: a convening run between facts and gate can change an item; re-read items against `surfaces/steward/convenings/` before asking. The critic caught a backlink claim on the one file outside the twelve opened; cite only what was opened.
