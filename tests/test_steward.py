@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -243,6 +244,64 @@ class ConciergeTests(Fixture):
         h = m.render_dashboards(d)
         self.assertIn("Thing &lt;x&gt;", h); self.assertIn("cd ~/p &amp;&amp; run it", h); self.assertIn('data-probe="1"', h); self.assertIn("Dev servers", h)
         self.assertEqual(m.render_dashboards([]), "")
+
+    def test_artefact_rules_first_match_wins(self):
+        m = self._mod(); f = {"title": "", "chartlib": "", "canvas": False, "svg": False}
+        c = lambda rel, facts=f, md={}: m.classify(rel, facts, md, "research/", "second-brain/articles/")[0]
+        self.assertEqual(c("research/x/atlas-map.html"), "research")  # path beats the visualisation words
+        self.assertEqual(c("second-brain/articles/brief.html"), "articles")
+        self.assertEqual(c("second-brain/zara-pack/README.html"), "articles")
+        self.assertEqual(c("repo/notes.html", f, {"type": "brief"}), "articles")
+        self.assertEqual(c("repo/views/board.html"), "visualisations")
+        self.assertEqual(c("repo/dashboard_run_1.html"), "visualisations")
+        self.assertEqual(c("repo/page.html", dict(f, svg=True)), "visualisations")
+        self.assertEqual(c("repo/page.html", dict(f, chartlib="chart.js")), "visualisations")
+        self.assertEqual(c("repo/mockup.html"), "unfiled")
+
+    def test_artefact_exclusions(self):
+        m = self._mod()
+        for rel in ("second-brain/surfaces/steward/concierge/console.html", "steward/templates/console.html", "org-atlas/static/index.html",
+                    "estate-console/static/index.html", "research/a/map_template.html", "x/thought piece v1 backup.html", "pia-plus/ui/index.html"):
+            self.assertTrue(m.excluded(rel), rel)
+        for rel in ("research/a/readme.html", "worx-ai-triage/views/board.html", "research/b/sources.html"):
+            self.assertEqual(m.excluded(rel), "", rel)
+        self.assertIn("node_modules", m.ART_PRUNE_DIRS); self.assertIn("dify-src", m.ART_PRUNE_DIRS)
+
+    def test_artefacts_crawl_overlay_and_static_render(self):
+        m = self._mod(); home = Path(tempfile.mkdtemp()); self.cfg["concierge_artefact_base"] = str(home)
+        research = home / "research"; vault = home / "second-brain"
+        (research / "proj").mkdir(parents=True); (vault / "articles").mkdir(parents=True); (home / "app" / "views").mkdir(parents=True)
+        self.cfg["research"] = str(research); self.cfg["vault"] = str(vault)
+        (research / "proj" / "README.md").write_text("# Proj\n\n**Status:** Active (kickoff)\n")
+        (research / "proj" / "readme.html").write_text("<html><title>Proj</title><p>A research page that says what it is in one line.</p></html>")
+        (research / "proj" / "map_template.html").write_text("<html><title>T</title></html>")
+        (vault / "articles" / "idea.html").write_text("<html><title>Idea</title></html>")
+        (vault / "articles" / "idea.md").write_text("---\ntitle: The Idea\ntype: article\ncreated: 2026-06-21\ndek: One line.\n---\n# The Idea\n")
+        (vault / "articles" / "published").mkdir(); (vault / "articles" / "published" / "idea.pdf").write_bytes(b"%PDF-1.4 /Title (The Idea)")
+        (home / "app" / "views" / "board.html").write_text("<html><title>Build board</title><svg></svg></html>")
+        (home / "app" / "loose.html").write_text("<html><title>Loose</title></html>")
+        (home / "app" / "frag.html").write_text("<div>partial</div>")
+        for d in (research, vault, home / "app"): subprocess.run(["git", "init", "-q", str(d)], check=True)
+        subprocess.run(["git", "-C", str(research), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(research), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], check=True)
+        art = m.crawl_artefacts(self.cfg, [str(home / "app")])
+        cats = {Path(i["rel"]).name: i["category"] for i in art["items"]}
+        self.assertEqual(cats, {"readme.html": "research", "idea.html": "articles", "board.html": "visualisations", "loose.html": "unfiled"})
+        idea = next(i for i in art["items"] if i["rel"].endswith("idea.html"))
+        self.assertEqual((idea["title"], idea["date"], idea["blurb"]), ("The Idea", "2026-06-21", "One line."))
+        self.assertTrue(idea["pdf"].endswith("published/idea.pdf"))
+        rd = next(i for i in art["items"] if i["rel"].endswith("readme.html"))
+        self.assertTrue(rd["committed"] and rd["last_hash"])  # git index read (the marker survives splitlines)
+        self.assertEqual(art["research_projects"]["proj"]["status"], "Active (kickoff)")
+        self.assertEqual({Path(x["path"]).name: x["reason"] for x in art["excluded"]}, {"map_template.html": "template file", "frag.html": "HTML fragment (no html, body or title)"})
+        home_s = str(Path("~").expanduser()); key = next(i["path"] for i in art["items"] if i["rel"].endswith("loose.html")); key = "~" + key[len(home_s):] if key.startswith(home_s) else key
+        v = m.artefacts_view(art, {"_artefacts": {key: {"category": "visualisations", "why": "because <I said>", "by": "sonny"}}})
+        loose = next(i for i in v["items"] if i["rel"].endswith("loose.html"))
+        self.assertEqual((loose["category"], loose["rule"]), ("visualisations", "overlay"))
+        h = m.render_artefacts(v)
+        for sid in ('id="research"', 'id="articles"', 'id="visualisations"', 'id="unfiled"'): self.assertIn(sid, h)
+        self.assertIn("because &lt;I said&gt;", h); self.assertIn('hidden>', h)  # filter boxes stay hidden without scripts
+        self.assertIn(">PDF</a>", h); self.assertIn("Unfiled</b> <span class=\"muted acount\" data-total=\"0\">(0)", h)
 
     def test_brief_facts_carry_drift(self):
         self.test_note_then_drift()

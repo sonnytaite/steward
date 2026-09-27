@@ -3,8 +3,10 @@
 
   crawl     walk the configured roots, emit registry.json (derived facts per agent/repo)
   note      write or update the curated overlay for one agent (stage, going, next, notes)
+  art       write or update the overlay's record for one artefact (category, title, blurb, why, data), keyed by ~/ path
   console   render console.html (standalone, local) from registry + overlay + research index + vault themes,
             with the Dashboards section (overlay "_dashboards", last touched from git at generation time)
+            and the Research, Articles and Visualisations sections (registry "artefacts", overlay "_artefacts")
   where     print "where did I get to" for one agent: derived facts + overlay + latest handover + recent commits
   drift     agents touched since their overlay note, or idle 30+ days with an open next step (feeds the brief)
 
@@ -13,6 +15,7 @@ State lives in <vault>/surfaces/steward/concierge/. stdlib only.
 """
 from __future__ import annotations
 import argparse, datetime as dt, json, os, re, subprocess, sys, html
+from urllib.parse import quote
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -175,6 +178,337 @@ def render_dashboards(items: list) -> str:
     return h + "</section>"
 
 
+# ----------------------------------------------------------------------------- artefacts
+# Research, Articles and Visualisations: the rendered pages (HTML, and PDF beside them) Sonny has had made and can open.
+# Scope: the known set (every repo the crawl registers, the overlay's agents and the _dashboards repos) plus the whole
+# research repo and the vault's share folder. The concierge_skip rules still apply, so Health NZ and private trees
+# (healthX, healthx-commons, vault-personal, og-docs, ...) are never read.
+#
+# Rules, first match wins (classify): under the research repo -> research; under the vault's share folder (surface
+# share_dir), a briefs/digests/packs path or a *-pack folder, or a sibling .md whose front matter type is brief, article,
+# digest or pack -> articles; a title or file name with a visualisation word, or a page with <svg>, <canvas> or a chart
+# library script tag -> visualisations; anything else -> unfiled (shown, folded, never dropped). The overlay's
+# "_artefacts" (keyed by ~/ path) then overrides category, title, blurb, why and data in Sonny's words.
+#
+# Exclusions: generated artefacts of tools, vendored or downloaded material, templates and fragments. Every excluded
+# file or pruned folder is recorded in the registry with its reason, so the exclusion list is auditable.
+ART_PRUNE_DIRS = {  # folder names never walked
+    "node_modules": "dependencies", ".venv": "virtualenv", "venv": "virtualenv", "site-packages": "dependencies",
+    ".git": "git internals", "dist": "build output", "build": "build output", ".next": "build output", "out": "build output",
+    "vendor": "vendored library", "__pycache__": "cache", ".pytest_cache": "cache", "coverage": "test coverage output",
+    "fixtures": "test fixtures", "tests": "test fixtures", "test": "test fixtures", "dify-src": "vendored third-party source (Dify)",
+    "raw": "downloaded source material", ".obsidian": "editor config", "_exemplars": "copyrighted reference scans",
+    "_style": "house style files", "source-project-for-review-only": "vendored copy of another repo",
+}
+ART_QUIET = {"dependencies", "virtualenv", "git internals", "cache", "editor config"}  # pruned without listing each folder
+ART_EXCLUDE = [  # (regex on the path relative to ~/Projects, reason); first match wins
+    (r"^second-brain/surfaces/steward/concierge/console\.html$", "the concierge's own console"),
+    (r"^steward/templates/", "concierge template"),
+    (r"^org-atlas/(static|images?|snapshots?)/", "org-atlas app shell and images, served by atlas serve"),
+    (r"^estate-console/static/", "estate console app shell, served by console.py"),
+    (r"^[^/]+/(static|web|ui|public|app|src)/index\.html$", "app shell, needs its server (see Dashboards)"),
+    (r"^whakapapa-kete/sources/published/", "published source texts the kete ingests, not made for Sonny"),
+    (r"/data/(derived|raw)/", "data folder: downloads and generated fragments"),
+    (r"(^|/)[^/]*template[^/]*\.html$", "template file"),
+    (r"(?i)(^|/)[^/]*[ ._-](backup|bak|old|copy)(\.[^/.]+)?\.html?$", "backup copy of another page"),
+    (r"^cisra/CIS_Controls_Guide[^/]*\.pdf$", "third-party reference document (CIS Controls guide)"),
+    (r"^drptool/nist\.sp\.[^/]*\.pdf$", "third-party reference document (NIST SP 800-184)"),
+]
+VIS_WORDS = re.compile(r"(?i)\b(atlas|dashboards?|maps?|charts?|workforce|scoreboards?|heat ?maps?|graphs?|visuali[sz](?:ation|er)s?|fleet view|radar|board)\b")
+CHART_LIB = re.compile(r"(?is)<script[^>]+src=[\"'][^\"']*(chart(?:\.umd)?(?:\.min)?\.js|chart\.js|/d3(?:@|\.v\d|\.min|\.js)|echarts|plotly|vega|leaflet|mapbox|highcharts|apexcharts|cytoscape|vis-network|mermaid)")
+ART_TYPES = {"brief", "article", "digest", "pack", "vision-artefact"}
+DATE_IN_NAME = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def _strip(s: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"(?s)<[^>]+>", " ", s or ""))).strip()
+
+
+def html_facts(f: Path) -> dict:
+    """Derived from the page itself: title (<title>, else first <h1>), blurb (meta description, else first paragraph),
+    visual markers and any stated data source line."""
+    try:
+        t = f.read_text(encoding="utf-8", errors="replace")[:2_000_000]
+    except OSError:
+        return {"title": "", "blurb": "", "svg": False, "canvas": False, "chartlib": "", "fragment": True, "data": ""}
+    title = _strip((re.search(r"(?is)<title[^>]*>(.*?)</title>", t) or [None, ""])[1])
+    h1 = _strip((re.search(r"(?is)<h1[^>]*>(.*?)</h1>", t) or [None, ""])[1])
+    desc = re.search(r"(?is)<meta[^>]+name=[\"']description[\"'][^>]*content=[\"']([^\"']+)", t)
+    body = re.sub(r"(?is)<(script|style|svg|nav|header)[^>]*>.*?</\1>", " ", t)
+    prose = lambda p: len(p) > 40 and sum(c.isalpha() or c.isspace() for c in p) / len(p) > 0.85 and p.count("→") < 3
+    para = next((p for p in (_strip(m) for m in re.findall(r"(?is)<p[^>]*>(.*?)</p>", body)) if prose(p)), "")
+    lib = CHART_LIB.search(t)
+    # a labelled source only: an element whose text opens "Data:", "Data source(s):" or "Source(s):" (never a data: URI or prose)
+    data = re.search(r"(?i)>\s*(?:<(?:b|strong|em|span|dt|th)[^>]*>\s*)?(?:data sources?|data|sources?)\s*(?:[:：]\s*</(?:b|strong|em|span|dt|th)>|</(?:b|strong|em|span|dt|th)>\s*[:：]|[:：])\s*(?:</?d[dt][^>]*>\s*)*([^<]{12,240})<", body)
+    return {"title": title or h1, "blurb": _strip(desc.group(1)) if desc else para[:280], "svg": bool(re.search(r"(?i)<svg[\s>]", t)),
+            "canvas": bool(re.search(r"(?i)<canvas[\s>]", t)), "chartlib": lib.group(1) if lib else "",
+            "fragment": not re.search(r"(?i)<(html|body|title)[\s>]", t), "data": _strip(data.group(1)).strip(" :") if data else ""}
+
+
+def pdf_title(f: Path) -> str:
+    """The PDF's own /Title from its info dictionary, when it is plain text and not a tool's placeholder; else ''."""
+    try:
+        with open(f, "rb") as fh:
+            head = fh.read(200_000); fh.seek(max(0, f.stat().st_size - 200_000)); tail = fh.read()
+    except OSError:
+        return ""
+    m = re.search(rb"/Title\s*\(((?:[^()\\]|\\.){3,200})\)", tail) or re.search(rb"/Title\s*\(((?:[^()\\]|\\.){3,200})\)", head)
+    t = m.group(1).decode("latin-1").replace("\\(", "(").replace("\\)", ")").strip() if m else ""
+    return "" if not t or t.startswith("\xfe\xff") or re.search(r"(?i)^(untitled|microsoft word|document\d*)", t) else t
+
+
+def git_index(repo: Path) -> dict:
+    """One pass over a repo's history: relative path -> (date, short hash, subject) of the last commit that touched it."""
+    out, cur = {}, None
+    mark = "@@concierge@@"  # a text marker: str.splitlines() treats control separators such as \x1e as line breaks
+    for line in git(repo, "log", f"--format={mark}%ad|%h|%s", "--date=short", "--name-only", "--no-renames").splitlines():
+        if line.startswith(mark): cur = tuple((line[len(mark):].split("|", 2) + ["", "", ""])[:3]); continue
+        if line and cur and line not in out: out[line] = cur
+    return out
+
+
+def md_facts(md: Path) -> dict:
+    """A sibling .md for an article: front matter title, type, date and dek; else the first ### line or paragraph."""
+    if not md.exists(): return {}
+    text = md.read_text(encoding="utf-8", errors="replace"); fm, _, body = parse_frontmatter(text)
+    dek = fm.get("dek") or (re.search(r"(?m)^### (.+)$", body) or [None, ""])[1] or first_para(text)
+    date = next((str(fm[k]) for k in ("date", "created", "written") if fm.get(k)), "")
+    return {"title": str(fm.get("title") or (re.search(r"(?m)^# (.+)$", body) or [None, ""])[1]).strip(), "type": str(fm.get("type", "")).lower(),
+            "date": DATE_IN_NAME.search(date).group(1) if DATE_IN_NAME.search(date) else "", "blurb": re.sub(r"\*\*|\*|\[\[|\]\]", "", str(dek)).strip()[:300]}
+
+
+def classify(rel: str, facts: dict, md: dict, research_prefix: str, share_prefix: str) -> tuple[str, str]:
+    """The rules, first match wins. Returns (category, the rule that fired)."""
+    parts = rel.split("/")
+    if research_prefix and rel.startswith(research_prefix): return "research", "under the research repo"
+    if share_prefix and rel.startswith(share_prefix): return "articles", "under the surface share folder"
+    if any(p in ("briefs", "digests", "packs") or p.endswith("-pack") for p in parts[:-1]): return "articles", "briefs, digests or packs path"
+    if md.get("type") in ART_TYPES: return "articles", f"front matter type {md['type']}"
+    name = re.sub(r"[_\-.]+", " ", Path(rel).stem)
+    if VIS_WORDS.search(name) or VIS_WORDS.search(facts.get("title", "")): return "visualisations", "visualisation word in title or file name"
+    if facts.get("chartlib"): return "visualisations", f"chart library ({facts['chartlib']})"
+    if facts.get("canvas"): return "visualisations", "contains <canvas>"
+    if facts.get("svg"): return "visualisations", "contains <svg>"
+    return "unfiled", "no rule matched"
+
+
+def excluded(rel: str) -> str:
+    return next((why for rx, why in ART_EXCLUDE if re.search(rx, rel)), "")
+
+
+def human_size(n: int) -> str:
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024 or u == "GB": return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
+        n /= 1024
+
+
+def research_project_facts(root: Path, name: str, gi: dict) -> dict:
+    readme = root / name / "README.md"; md = readme.read_text(encoding="utf-8", errors="replace") if readme.exists() else ""
+    fm, _, _ = parse_frontmatter(md) if md else ({}, "", "")
+    st = STAGE_RE.search(md); status = str(fm.get("status") or (st.group(2) if st else "")).strip()
+    dates = [v for k, v in gi.items() if k.startswith(name + "/")]
+    last = max(dates, key=lambda d: d[0]) if dates else ("", "", "")
+    return {"name": name, "title": (re.search(r"(?m)^# (.+)$", md) or [None, name])[1].strip(), "status": re.sub(r"\*\*", "", status)[:200],
+            "last_touched": last[0], "last_hash": last[1], "last_subject": last[2][:160], "path": str(root / name)}
+
+
+def crawl_artefacts(cfg: dict, repos: list) -> dict:
+    """Walk the known set and return {items, excluded, research_projects}. Derived only; the overlay is applied at console time."""
+    home = Path(cfg.get("concierge_artefact_base", "~/Projects")).expanduser().resolve()  # resolved, like the roots, so symlinks cannot skew prefixes
+    research = Path(cfg["research"]).resolve(); vault = Path(cfg["vault"]).resolve(); skip = set(cfg.get("concierge_skip", []))
+    scfg = vault / "surface.config.json"
+    share_dir = json.loads(scfg.read_text(encoding="utf-8")).get("share_dir", "share") if scfg.exists() else "share"
+    rel_of = lambda p: os.path.relpath(p, home)
+    research_prefix = rel_of(research) + "/"; share_prefix = rel_of(vault / share_dir) + "/"
+    # the known set: registered repos + overlay agents + dashboard repos, plus research and the vault (which crawl skips as repos)
+    roots = {Path(r).resolve() for r in repos} | {research.resolve(), vault.resolve()}
+    ov = load_overlay(state(cfg))
+    for k in agent_overlay(ov):
+        if (home / k).is_dir(): roots.add((home / k).resolve())
+    for d in ov.get("_dashboards", []):
+        if d.get("repo") and Path(d["repo"]).expanduser().is_dir(): roots.add(Path(d["repo"]).expanduser().resolve())
+    roots = sorted(r for r in roots if r.name not in skip or r in (research.resolve(), vault.resolve()))
+    dash_files = {str(Path(d["url"][len("file://"):]).expanduser()) for d in ov.get("_dashboards", []) if d.get("url", "").startswith("file://")}
+    dash_files |= {str(Path(d["repo"]).expanduser() / "index.html") for d in ov.get("_dashboards", []) if d.get("repo") and d.get("url", "").startswith("http")}
+    hnz = {Path(d["repo"]).expanduser().resolve().name for d in ov.get("_dashboards", []) if d.get("scope") == "hnz" and d.get("repo")}
+    items, excl, pruned = [], [], {}
+    for root in roots:
+        files = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            keep = []
+            for dn in dirnames:
+                why = ART_PRUNE_DIRS.get(dn)
+                if not why: keep.append(dn); continue
+                if why in ART_QUIET: continue
+                n = sum(1 for _, _, fs in os.walk(Path(dirpath) / dn) for f in fs if f.lower().endswith((".html", ".htm", ".pdf")))
+                if n: pruned[(rel_of(Path(dirpath) / dn), why)] = n
+            dirnames[:] = sorted(keep)
+            files += [Path(dirpath) / f for f in filenames if f.lower().endswith((".html", ".htm", ".pdf"))]
+        if not files: continue
+        gi = git_index(root); pdfs = {}
+        for f in files:
+            if f.suffix.lower() != ".pdf": continue
+            parent = f.parent.parent if f.parent.name == "published" else f.parent
+            pdfs[(parent, f.stem)] = f
+        paired = set()
+        for f in sorted(files):
+            rel = rel_of(f); why = excluded(rel) or ("already in Dashboards" if str(f) in dash_files else "")
+            if f.suffix.lower() == ".pdf": continue
+            facts = html_facts(f)
+            if not why and facts["fragment"]: why = "HTML fragment (no html, body or title)"
+            if why: excl.append({"path": rel, "reason": why}); continue
+            pdf = pdfs.get((f.parent, f.stem)); paired.add(pdf) if pdf else None
+            items.append(_artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_prefix, hnz, home))
+        for pdf in sorted(set(pdfs.values()) - paired):
+            rel = rel_of(pdf); why = excluded(rel)
+            if why: excl.append({"path": rel, "reason": why}); continue
+            items.append(_artefact(pdf, rel, {"title": pdf_title(pdf), "blurb": "", "fragment": False}, None, root, gi, research, research_prefix, share_prefix, hnz, home))
+    rgi = git_index(research)
+    projects = {i["group"] for i in items if i["category"] == "research" and i.get("group")}
+    rp = {n: research_project_facts(research, n, rgi) for n in sorted(projects)}
+    folded = {}  # more than three files excluded for one reason in one folder -> one row for the folder
+    for x in excl: folded.setdefault((str(Path(x["path"]).parent), x["reason"]), []).append(x)
+    excl = [x for (d, w), xs in folded.items() for x in xs if len(xs) <= 3] + [{"path": d + "/", "reason": w, "files": len(xs)} for (d, w), xs in folded.items() if len(xs) > 3]
+    excl = sorted(excl, key=lambda x: x["path"]) + [{"path": p + "/", "reason": w, "files": n} for (p, w), n in sorted(pruned.items())]
+    return {"items": items, "excluded": excl, "research_projects": rp}
+
+
+def _artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_prefix, hnz, home) -> dict:
+    md = md_facts(f.with_suffix(".md"))
+    if not md and f.name.lower() == "readme.html": md = {"blurb": first_para((f.parent / "README.md").read_text(encoding="utf-8", errors="replace"))[:300]} if (f.parent / "README.md").exists() else {}
+    cat, rule = classify(rel, facts, md, research_prefix, share_prefix)
+    vis = classify(rel, facts, md, "", "")[1] if cat == "research" and classify(rel, facts, md, "", "")[0] == "visualisations" else ""
+    in_repo = os.path.relpath(f, root); g = gi.get(in_repo)
+    if g: date, sha, subj, committed = g[0], g[1], g[2][:160], True
+    else: date, sha, subj, committed = dt.date.fromtimestamp(f.stat().st_mtime).isoformat(), "", "", False
+    if rel.startswith(research_prefix):
+        group = in_repo.split("/", 1)[0] if "/" in in_repo else ""; project, ppath = f"research/{group}", str(research / group)
+    else:
+        group, project, ppath = "", root.name, str(root)
+    if cat == "articles":
+        parts = in_repo.split("/")
+        group = "packs" if any(p == "packs" or p.endswith("-pack") for p in parts[:-1]) else ("digests" if "digests" in parts or "digest" in f.stem else "briefs")
+    data = facts.get("data", "")
+    if cat == "visualisations" and not data:
+        for readme in (f.parent / "README.md", Path(ppath) / "README.md"):
+            if readme.exists():
+                hit = next((l for l in readme.read_text(encoding="utf-8", errors="replace").splitlines() if f.name in l and re.search(r"(?i)data|source|from", l)), "")
+                if hit: data = "README: " + re.sub(r"[*`]|\[([^\]]+)\]\([^)]*\)", r"\1", hit).strip(" -")[:240]; break
+    return {"path": str(f), "rel": rel, "ext": f.suffix.lower().lstrip("."), "title": md.get("title") or facts.get("title") or f.stem.replace("-", " "),
+            "blurb": md.get("blurb") or facts.get("blurb", ""), "date": md.get("date") or (DATE_IN_NAME.search(f.name).group(1) if DATE_IN_NAME.search(f.name) else ""),
+            "category": cat, "rule": rule, "group": group, "project": project, "project_path": ppath, "pdf": str(pdf) if pdf else "",
+            "data": data, "last_touched": date, "last_hash": sha, "last_subject": subj, "committed": committed, "size": f.stat().st_size,
+            "scope": "hnz" if root.name in hnz else "", "looks_visual": vis}
+
+
+def artefacts_view(reg_art: dict, ov: dict) -> dict:
+    """Apply the overlay's _artefacts (keyed by ~/ path) over the derived list: category, title, blurb, why, data."""
+    home = str(Path("~").expanduser()); cur = ov.get("_artefacts", {})
+    items = []
+    for i in reg_art.get("items", []):
+        i = dict(i); o = cur.get("~" + i["path"][len(home):] if i["path"].startswith(home) else i["path"], {})
+        for k in ("category", "title", "blurb", "why", "data"):
+            if o.get(k): i[k] = o[k]
+        if o.get("category"): i["rule"] = "overlay"
+        if o: i["overlay_by"] = o.get("by", ""); i["overlay_updated"] = o.get("updated", "")
+        items.append(i)
+    return {"items": items, "research_projects": reg_art.get("research_projects", {}), "excluded": reg_art.get("excluded", [])}
+
+
+def render_artefacts(view: dict) -> str:
+    """Static HTML for Research, Articles, Visualisations and Unfiled, so the lists render with scripts blocked;
+    the script only adds the per-section filter."""
+    e = lambda s: html.escape(str(s or ""), quote=True); uri = lambda p: "file://" + quote(str(p))
+    items = view["items"]; rp = view["research_projects"]
+    by = {c: [i for i in items if i["category"] == c] for c in ("research", "articles", "visualisations", "unfiled")}
+
+    def touched(i):
+        if i.get("last_hash"): return f'{e(i["last_touched"])} <code title="{e(i["last_subject"])}">{e(i["last_hash"])}</code>'
+        return f'{e(i["last_touched"])} <span class="muted">(file date, not in git)</span>'
+
+    def src(i):
+        return f'<a href="{e(uri(i["project_path"]))}">{e(i["project"])}</a>'
+
+    def links(i):
+        a = f'<a class="atitle" href="{e(uri(i["path"]))}" target="_blank" rel="noopener">{e(i["title"])}</a>'
+        kinds = [f'<a class="kind" href="{e(uri(i["path"]))}" target="_blank" rel="noopener">{e(i["ext"].upper())}</a>']
+        if i.get("pdf"): kinds.append(f'<a class="kind" href="{e(uri(i["pdf"]))}" target="_blank" rel="noopener">PDF</a>')
+        return a, " ".join(kinds)
+
+    def tags(i):
+        t = '<span class="tag warn">Health NZ work</span>' if i.get("scope") == "hnz" else ""
+        if i.get("looks_visual") and i["category"] == "research": t += f'<span class="tag" title="passes the visualisation test: {e(i["looks_visual"])}">visual</span>'
+        return t + (f'<span class="tag ok" title="overlay record {e(i.get("overlay_updated"))} by {e(i.get("overlay_by"))}">overlay</span>' if "overlay_by" in i else "")
+
+    def row(i, show_src=True):
+        a, k = links(i)
+        why = f'<div class="why"><b>Why:</b> {e(i["why"])}</div>' if i.get("why") else ""
+        blurb = f'<div class="ablurb">{e(i["blurb"][:260])}</div>' if i.get("blurb") else ""
+        return (f'<li class="aitem"><div class="aline">{a} <span class="kinds">{k}</span>{tags(i)}</div>{blurb}{why}'
+                f'<div class="meta">{(src(i) + " · ") if show_src else ""}<code>{e(Path(i["rel"]).name)}</code> · last touched {touched(i)} · {e(human_size(i["size"]))}</div></li>')
+
+    def card(i):
+        a, k = links(i)
+        none = "What it shows: not stated on the page." if i["category"] == "visualisations" else "No summary on the page (a PDF carries only its title)." if i["ext"] == "pdf" else "No summary on the page."
+        what = f'<p>{e(i["blurb"][:300])}</p>' if i.get("blurb") else f'<p class="muted">{none}</p>'
+        data = f'<div class="meta"><b>Data:</b> {e(i["data"])}</div>' if i.get("data") else '<div class="meta"><b>Data:</b> not stated on the page or in a nearby README</div>'
+        why = f'<div class="why"><b>Why:</b> {e(i["why"])}</div>' if i.get("why") else ""
+        date = f' · dated {e(i["date"])}' if i.get("date") else ""
+        return (f'<div class="card art aitem"><h3>{a}</h3><div class="meta"><span class="kinds">{k}</span>{tags(i)}{date}</div>{what}{why}{data if i["category"] == "visualisations" else ""}'
+                f'<div class="meta">{src(i)} · last touched {touched(i)} · {e(human_size(i["size"]))}</div></div>')
+
+    def head(cid, name, n, lead):
+        return (f'<section class="arts" id="{cid}"><div class="dtop"><h2>{name} <span class="muted acount" data-total="{n}">({n})</span></h2>'
+                f'<input class="afilter" type="search" placeholder="filter {name.lower()}…" aria-label="filter {name.lower()}" hidden></div><p class="lead">{lead}</p>')
+
+    h = ""
+    # Research, grouped by project, newest first; long lists fold after eight
+    groups = {}
+    for i in by["research"]: groups.setdefault(i["group"] or "(research root)", []).append(i)
+    order = sorted(groups, key=lambda g: max(x["last_touched"] for x in groups[g]), reverse=True)
+    h += head("research", "Research", len(by["research"]), f'Every rendered page in the research repo, {len(groups)} projects, most recently touched first; each project shows four pages and folds the rest. The status line is the project README\'s own.')
+    for g in order:
+        lst = sorted(sorted(groups[g], key=lambda x: (x["last_touched"], x["rel"]), reverse=True), key=lambda x: not x["rel"].lower().endswith("readme.html"))
+        p = rp.get(g, {}); status = f'<span class="astatus" title="{e(p["status"])}">{e(p["status"])}</span>' if p.get("status") else '<span class="muted">status not recorded</span>'
+        pt = f'last touched {e(p["last_touched"])} <code title="{e(p.get("last_subject"))}">{e(p.get("last_hash"))}</code>' if p.get("last_touched") else ""
+        rows = "".join(row(i, False) for i in lst[:4]); more = lst[4:]
+        fold = f'<details class="more"><summary>{len(more)} more pages</summary><ul class="alist">{"".join(row(i, False) for i in more)}</ul></details>' if more else ""
+        h += (f'<div class="agroup"><div class="ghead"><a class="gname" href="{e(uri(p.get("path") or lst[0]["project_path"]))}">{e(g)}</a> <span class="muted">({len(lst)})</span> {status}'
+              f'<span class="meta"> {pt}</span></div><ul class="alist">{rows}</ul>{fold}</div>')
+    h += "</section>"; research_html, h = h, ""
+    # Articles: briefs, digests, packs
+    arts = by["articles"]
+    h += head("articles", "Articles", len(arts), "HBR-style briefs, digests and packs from the surface plugin (the vault's <code>articles/</code> and pack folders), HTML and PDF side by side. Title, date and summary come from each article's front matter where it has one.")
+    for g, label in (("briefs", "Briefs and one-pagers"), ("digests", "Digests"), ("packs", "Packs")):
+        lst = sorted((i for i in arts if i["group"] == g), key=lambda x: (x.get("date") or x["last_touched"]), reverse=True)
+        if lst: h += f'<div class="agroup"><div class="ghead"><b>{label}</b> <span class="muted">({len(lst)})</span></div><div class="grid agrid">{"".join(card(i) for i in lst)}</div></div>'
+    h += "</section>"; articles_html, h = h, ""
+    vis = sorted(by["visualisations"], key=lambda x: x["last_touched"], reverse=True)
+    h += head("visualisations", "Visualisations", len(vis), "Standalone views you open to see rather than read. What it shows and the data behind it are quoted from the page or a README beside it; where neither says, it says so.")
+    h += f'<div class="grid agrid">{"".join(card(i) for i in vis)}</div></section>'
+    h += articles_html + research_html  # smallest first, so Research's length never buries the other two
+    un = sorted(by["unfiled"], key=lambda x: x["last_touched"], reverse=True)
+    ex = view.get("excluded", [])
+    reasons = {}
+    for x in ex: reasons[x["reason"]] = reasons.get(x["reason"], 0) + x.get("files", 1)
+    exrows = "".join(f'<tr><td><code>{e(x["path"])}</code></td><td>{x.get("files", 1)}</td><td>{e(x["reason"])}</td></tr>' for x in ex)
+    h += (f'<section class="arts" id="unfiled"><details class="devs"><summary><b>Unfiled</b> <span class="muted acount" data-total="{len(un)}">({len(un)})</span> '
+          f'<span class="muted">pages the rules could not place; file one by giving it a category in the overlay\'s <code>_artefacts</code></span></summary>'
+          f'<input class="afilter" type="search" placeholder="filter unfiled…" aria-label="filter unfiled" hidden><ul class="alist">{"".join(row(i) for i in un)}</ul></details>'
+          f'<details class="devs"><summary><b>Excluded</b> <span class="muted">({sum(reasons.values())} files, by the documented exclusion list)</span></summary>'
+          f'<p class="meta">{e("; ".join(f"{r}: {n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])))}. The list is ART_PRUNE_DIRS and ART_EXCLUDE in <code>rails/concierge.py</code>; '
+          f'dependency, virtualenv, cache and git folders are skipped without listing.</p><table><tr><th>Path</th><th>Files</th><th>Why</th></tr>'
+          f'{exrows}</table></details></section>')
+    return h
+
+
+def artefact_jump(view: dict) -> str:
+    c = lambda k: sum(1 for i in view["items"] if i["category"] == k)
+    return (f'<nav class="jump" aria-label="sections"><a href="#dashboards">Dashboards</a><a href="#visualisations">Visualisations ({c("visualisations")})</a>'
+            f'<a href="#articles">Articles ({c("articles")})</a><a href="#research">Research ({c("research")})</a>'
+            f'<a href="#unfiled">Unfiled ({c("unfiled")})</a><a href="#agents">Agents</a></nav>')
+
+
 def cmd_crawl(a, cfg):
     roots = [Path(r).expanduser() for r in cfg.get("concierge_roots", ["~/Projects"])]
     skip = set(cfg.get("concierge_skip", []))
@@ -198,9 +532,12 @@ def cmd_crawl(a, cfg):
                             "commits_30d": len(git(root, "log", "--since=30 days ago", "--format=%s", "--", str(proj.relative_to(root))).splitlines()),
                             "recent": git(root, "log", "-6", "--format=%ad %s", "--date=short", "--", str(proj.relative_to(root))).splitlines(),
                             "is_agent": True, "research_projects": [proj.name], "latest_handover": None, "wiki_pages": wiki_links(cfg, proj.name)})
-    reg = {"generated": dt.date.today().isoformat(), "entries": entries}
+    art = crawl_artefacts(cfg, [e["path"] for e in entries if not e["id"].startswith("research/")])
+    reg = {"generated": dt.date.today().isoformat(), "entries": entries, "artefacts": art}
     sd = state(cfg); (sd / "registry.json").write_text(json.dumps(reg, indent=1, ensure_ascii=False), encoding="utf-8")
+    cats = {c: sum(1 for i in art["items"] if i["category"] == c) for c in ("research", "articles", "visualisations", "unfiled")}
     print(f"registry: {len(entries)} entries ({sum(1 for e in entries if e['is_agent'])} with agent artefacts) -> {sd / 'registry.json'}")
+    print("artefacts: " + ", ".join(f"{k} {v}" for k, v in cats.items()) + f"; excluded {len(art['excluded'])}")
 
 
 def cmd_note(a, cfg):
@@ -228,6 +565,20 @@ def compute_drift(cfg: dict, today: dt.date | None = None) -> list:
         elif last and o.get("next") and (today - last).days >= 30:
             out.append({"id": e["id"], "kind": "idle-with-next", "detail": f"idle {(today - last).days} days with next step: {o['next'][:90]}"})
     return out
+
+
+def cmd_art(a, cfg):
+    """Write or update one overlay _artefacts record (category, title, blurb, why, data), keyed by ~/ path."""
+    sd = state(cfg); ov = load_overlay(sd); home = str(Path("~").expanduser())
+    p = str(Path(a.path).expanduser().resolve()); key = "~" + p[len(home):] if p.startswith(home) else p
+    if a.category and a.category not in ("research", "articles", "visualisations", "unfiled"): sys.exit(f"unknown category {a.category}")
+    arts = ov.setdefault("_artefacts", {}); rec = arts.get(key, {})
+    for k in ("category", "title", "blurb", "why", "data"):
+        v = getattr(a, k, None)
+        if v is not None: rec[k] = v
+    rec["updated"] = dt.date.today().isoformat(); rec["by"] = a.by or "sonny"
+    arts[key] = rec; (sd / "overlay.json").write_text(json.dumps(ov, indent=1, ensure_ascii=False), encoding="utf-8")
+    print(json.dumps({key: rec}, ensure_ascii=False))
 
 
 def cmd_drift(a, cfg):
@@ -289,14 +640,14 @@ def themes(cfg: dict) -> list:
 
 def cmd_console(a, cfg):
     sd = state(cfg); reg = json.loads((sd / "registry.json").read_text(encoding="utf-8")); full = load_overlay(sd); ov = agent_overlay(full)
-    dash = dashboards(full)
+    dash = dashboards(full); art = artefacts_view(reg.get("artefacts", {}), full)
     data = {"generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "registry": reg["entries"], "overlay": ov, "drift": compute_drift(cfg), "dashboards": dash,
             "streams": research_streams(cfg), "insights": insights(cfg), "themes": themes(cfg),
             "moved": {"vault": git(Path(cfg["vault"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:25],
                       "research": git(Path(cfg["research"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:40]},
             "stages": cfg.get("concierge_stages", ["idea", "spec", "prototype", "harness", "sandbox", "pilot", "production", "parked"])}
     tpl = (HERE.parent / "templates" / "console.html").read_text(encoding="utf-8")
-    out = tpl.replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
+    out = tpl.replace("<!--__JUMP__-->", artefact_jump(art)).replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("<!--__ARTEFACTS__-->", render_artefacts(art)).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     target = Path(a.out).expanduser() if a.out else sd / "console.html"
     target.write_text(out, encoding="utf-8"); print(f"console -> {target}")
 
@@ -308,8 +659,9 @@ def main(argv=None):
     n = sub.add_parser("note"); n.add_argument("--agent", required=True); [n.add_argument(f"--{k}") for k in ("stage", "going", "next", "notes", "run", "by")]
     w = sub.add_parser("where"); w.add_argument("agent")
     c = sub.add_parser("console"); c.add_argument("--out")
+    r = sub.add_parser("art"); r.add_argument("--path", required=True); [r.add_argument(f"--{k}") for k in ("category", "title", "blurb", "why", "data", "by")]
     a = ap.parse_args(argv); cfg = load_config(a.config)
-    {"crawl": cmd_crawl, "note": cmd_note, "where": cmd_where, "console": cmd_console, "drift": cmd_drift}[a.cmd](a, cfg)
+    {"crawl": cmd_crawl, "note": cmd_note, "art": cmd_art, "where": cmd_where, "console": cmd_console, "drift": cmd_drift}[a.cmd](a, cfg)
 
 
 if __name__ == "__main__":
