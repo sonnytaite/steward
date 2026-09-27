@@ -15,7 +15,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/rails/concierge.py" crawl
 python3 "${CLAUDE_PLUGIN_ROOT}/rails/concierge.py" console
 ```
 
-The registry (`<vault>/surfaces/steward/concierge/registry.json`) is derived: never edit it. The overlay (`overlay.json`) is Sonny's words: only edit it through `note`, after his verdict. The console is written to `<vault>/surfaces/steward/concierge/console.html`; `~/Desktop/Concierge.html` links to it.
+The registry (`<vault>/surfaces/steward/concierge/registry.json`) is derived: never edit it. The overlay (`overlay.json`) is Sonny's words: only edit it through `note`, after his verdict. The overlay's `_dashboards` list is the curated inventory of local dashboards, dev servers and services (url, start_cwd, start_cmd, setup, what, why, repo, next, scope); the console renders it as the Dashboards section at the top, derives last touched from git at generation time, and checks each URL live from the page. Add or change an entry there when a build gains a UI. The console is written to `<vault>/surfaces/steward/concierge/console.html`; `~/Desktop/Concierge.html` links to it.
 
 ## 2. No argument: the state of the estate
 

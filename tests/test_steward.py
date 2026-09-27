@@ -232,6 +232,18 @@ class ConciergeTests(Fixture):
         d = {x["id"]: x["kind"] for x in m.compute_drift(self.cfg, TODAY)}
         self.assertEqual(d, {"a": "stale-record", "b": "idle-with-next"})
 
+    def test_dashboards_curated_list_renders_static(self):
+        m = self._mod()
+        ov = {"a": {"stage": "harness"}, "_dashboards": [
+            {"kind": "dashboard", "name": "Thing <x>", "url": "http://127.0.0.1:9", "repo": str(self.vault / "nope"), "start_cwd": "~/p", "start_cmd": "run it"},
+            {"kind": "dev", "name": "dev1", "url": "http://localhost:3000", "start_cwd": "~/d", "start_cmd": "npm run dev"}]}
+        self.assertEqual(list(m.agent_overlay(ov)), ["a"])
+        d = m.dashboards(ov)
+        self.assertEqual(d[0]["last_touched"], "")
+        h = m.render_dashboards(d)
+        self.assertIn("Thing &lt;x&gt;", h); self.assertIn("cd ~/p &amp;&amp; run it", h); self.assertIn('data-probe="1"', h); self.assertIn("Dev servers", h)
+        self.assertEqual(m.render_dashboards([]), "")
+
     def test_brief_facts_carry_drift(self):
         self.test_note_then_drift()
         self.assertIn("registry_drift", steward.build_facts(self.cfg, TODAY))

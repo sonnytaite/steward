@@ -54,7 +54,7 @@ Weekly run: `bin/steward-weekly.sh` saves the facts, attempts a headless brief w
 
 ## Concierge
 
-The agent that keeps track of the agents (the Dell debrief's concierge, at personal scale). `rails/concierge.py crawl` derives a registry of every repo and agent under the configured roots from git, READMEs, handovers and wiki mentions; `note` records Sonny's own account (stage, where he was going, next step, how to run) in an overlay the crawler never touches; `console` renders a standalone local HTML console (agents by stage, what moved, research streams, themes, insights, drift); `where <agent>` answers "where did I get to"; `drift` feeds the weekly brief. State: `<vault>/surfaces/steward/concierge/`.
+The agent that keeps track of the agents (the Dell debrief's concierge, at personal scale). `rails/concierge.py crawl` derives a registry of every repo and agent under the configured roots from git, READMEs, handovers and wiki mentions; `note` records Sonny's own account (stage, where he was going, next step, how to run) in an overlay the crawler never touches; `console` renders a standalone local HTML console (a Dashboards section at the top with every local dashboard's URL, start command, last touched and live up/down status, from the overlay's `_dashboards` list; then agents by stage, what moved, research streams, themes, insights, drift); `where <agent>` answers "where did I get to"; `drift` feeds the weekly brief. State: `<vault>/surfaces/steward/concierge/`.
 
 ## The three layers
 

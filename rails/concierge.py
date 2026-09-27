@@ -3,7 +3,8 @@
 
   crawl     walk the configured roots, emit registry.json (derived facts per agent/repo)
   note      write or update the curated overlay for one agent (stage, going, next, notes)
-  console   render console.html (standalone, local) from registry + overlay + research index + vault themes
+  console   render console.html (standalone, local) from registry + overlay + research index + vault themes,
+            with the Dashboards section (overlay "_dashboards", last touched from git at generation time)
   where     print "where did I get to" for one agent: derived facts + overlay + latest handover + recent commits
   drift     agents touched since their overlay note, or idle 30+ days with an open next step (feeds the brief)
 
@@ -107,6 +108,73 @@ def load_overlay(sd: Path) -> dict:
     return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
 
 
+def agent_overlay(ov: dict) -> dict:
+    """Overlay records keyed by agent id; keys starting with _ hold curated lists (for example _dashboards)."""
+    return {k: v for k, v in ov.items() if not k.startswith("_")}
+
+
+def dashboards(ov: dict) -> list:
+    """The curated list of local dashboards, dev servers and services, with last touched derived from git now."""
+    out = []
+    for d in ov.get("_dashboards", []):
+        d = dict(d); repo = Path(d["repo"]).expanduser() if d.get("repo") else None
+        line = git(repo, "log", "-1", "--format=%ad|%h|%s", "--date=short") if repo and (repo / ".git").exists() else ""
+        date, sha, subject = (line.split("|", 2) + ["", "", ""])[:3]
+        d.update(last_touched=date, last_hash=sha, last_subject=subject[:160])
+        if d.get("url", "").startswith("file://~"): d["url"] = "file://" + str(Path("~").expanduser()) + d["url"][len("file://~"):]
+        out.append(d)
+    return out
+
+
+def render_dashboards(items: list) -> str:
+    """Static HTML for the Dashboards section, so it renders even when scripts are blocked; the script adds live status."""
+    e = lambda s: html.escape(str(s or ""), quote=True)
+
+    def cmd(d):
+        return f"cd {d['start_cwd']} && {d['start_cmd']}" if d.get("start_cwd") and d["start_cwd"] != "~" else d.get("start_cmd", "")
+
+    def status(d):
+        if d["url"].startswith("file://"): return '<span class="dstate"><span class="dot file"></span><span class="dlabel">static file</span></span>'
+        return '<span class="dstate" data-probe="1"><span class="dot"></span><span class="dlabel">not checked</span></span>'
+
+    def touched(d):
+        if not d.get("last_touched"): return '<span class="muted">no git history</span>'
+        return f'{e(d["last_touched"])} <code title="{e(d["last_subject"])}">{e(d["last_hash"])}</code>'
+
+    def dcard(d):
+        hnz = '<span class="tag warn">Health NZ work</span>' if d.get("scope") == "hnz" else ""
+        setup = f'<div class="meta">first time: <code>{e(d["setup"])}</code></div>' if d.get("setup") else ""
+        note = f'<div class="meta">{e(d["note"])}</div>' if d.get("note") else ""
+        repo = f' · <code>{e(d["repo"])}</code>' if d.get("repo") else ""
+        nxt = f'<p><b>Next:</b> {e(d["next"])}</p>' if d.get("next") else '<p class="muted">Next: not recorded</p>'
+        return (f'<div class="card dash" data-url="{e(d["url"])}"><div class="dhead"><h3>{e(d["name"])}</h3>{status(d)}</div>'
+                f'<div class="meta"><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a> {hnz}</div>'
+                f'<div class="cmdrow"><pre class="cmd">{e(cmd(d))}</pre><button class="copy" type="button" title="copy the start command">copy</button></div>{setup}'
+                f'<p>{e(d.get("what"))} {e(d.get("why"))}</p>{nxt}{note}'
+                f'<div class="meta">last touched {touched(d)}{repo}</div></div>')
+
+    def row(d):
+        hnz = ' <span class="tag warn">Health NZ work</span>' if d.get("scope") == "hnz" else ""
+        return (f'<tr><td><b>{e(d["name"])}</b>{hnz}</td><td><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a></td>'
+                f'<td><code>{e(cmd(d))}</code></td><td>{e(d.get("what"))}</td><td class="muted">{touched(d)}</td></tr>')
+
+    dash = [d for d in items if d.get("kind", "dashboard") == "dashboard"]
+    dev = [d for d in items if d.get("kind") == "dev"]
+    svc = [d for d in items if d.get("kind") == "service"]
+    if not items: return ""
+    h = ('<section id="dashboards"><div class="dtop"><h2>Dashboards <span class="muted">(' + str(len(dash)) + ')</span></h2>'
+         '<button class="checknow" id="checknow" type="button">check now</button><span class="gen" id="checked">live status needs scripts; the links and commands work without them</span></div>'
+         '<p class="lead">Every local dashboard you have built, with the command to start it if it is down. Status is checked from this page every 60 seconds: '
+         '<span class="dot up"></span> up, <span class="dot down"></span> down, <span class="dot"></span> checking.</p>'
+         f'<div class="grid dgrid">{"".join(dcard(d) for d in dash)}</div>')
+    if svc:
+        h += f'<h2>Services <span class="muted">({len(svc)})</span></h2><div class="grid dgrid">{"".join(dcard(d) for d in svc)}</div>'
+    if dev:
+        h += (f'<details class="devs"><summary>Dev servers <span class="muted">({len(dev)}), Next.js apps that all default to port 3000, so only one runs at a time; no live status</span></summary>'
+              f'<table><tr><th>Repo</th><th>URL</th><th>Start</th><th>What</th><th>Last touched</th></tr>{"".join(row(d) for d in dev)}</table></details>')
+    return h + "</section>"
+
+
 def cmd_crawl(a, cfg):
     roots = [Path(r).expanduser() for r in cfg.get("concierge_roots", ["~/Projects"])]
     skip = set(cfg.get("concierge_skip", []))
@@ -175,6 +243,8 @@ def cmd_where(a, cfg):
     print(f"Last commit {e['last_commit']} · {e['commits']} commits · {e['commits_30d']} in 30 days · artefacts: {', '.join(e['artefacts']) or 'none'}")
     if e["declared_stage"]: print(f"Declared in README: {e['declared_stage']}")
     print(f"\nOverlay (Sonny's words, {o.get('updated', 'never')}): stage={o.get('stage', '?')}\n  going: {o.get('going', '?')}\n  next: {o.get('next', '?')}\n  notes: {o.get('notes', '')}")
+    for d in (x for x in dashboards(load_overlay(sd)) if Path(x.get("repo", "")).expanduser().name == e["id"]):
+        print(f"Dashboard: {d['name']} {d['url']}  (start: cd {d['start_cwd']} && {d['start_cmd']})")
     if e.get("how_to_run") or o.get("run"): print("\nHow to run:\n" + (o.get("run") or "\n".join(e["how_to_run"])))
     print("\nResearch: " + ", ".join(e.get("research_projects") or []) + (f"\nLatest handover: {e['latest_handover']}" if e.get("latest_handover") else ""))
     print("Wiki: " + ", ".join(e.get("wiki_pages") or []))
@@ -218,14 +288,15 @@ def themes(cfg: dict) -> list:
 
 
 def cmd_console(a, cfg):
-    sd = state(cfg); reg = json.loads((sd / "registry.json").read_text(encoding="utf-8")); ov = load_overlay(sd)
-    data = {"generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "registry": reg["entries"], "overlay": ov, "drift": compute_drift(cfg),
+    sd = state(cfg); reg = json.loads((sd / "registry.json").read_text(encoding="utf-8")); full = load_overlay(sd); ov = agent_overlay(full)
+    dash = dashboards(full)
+    data = {"generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "registry": reg["entries"], "overlay": ov, "drift": compute_drift(cfg), "dashboards": dash,
             "streams": research_streams(cfg), "insights": insights(cfg), "themes": themes(cfg),
             "moved": {"vault": git(Path(cfg["vault"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:25],
                       "research": git(Path(cfg["research"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:40]},
             "stages": cfg.get("concierge_stages", ["idea", "spec", "prototype", "harness", "sandbox", "pilot", "production", "parked"])}
     tpl = (HERE.parent / "templates" / "console.html").read_text(encoding="utf-8")
-    out = tpl.replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
+    out = tpl.replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     target = Path(a.out).expanduser() if a.out else sd / "console.html"
     target.write_text(out, encoding="utf-8"); print(f"console -> {target}")
 
