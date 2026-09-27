@@ -209,7 +209,7 @@ ART_EXCLUDE = [  # (regex on the path relative to ~/Projects, reason); first mat
     (r"^[^/]+/(static|web|ui|public|app|src)/index\.html$", "app shell, needs its server (see Dashboards)"),
     (r"^whakapapa-kete/sources/published/", "published source texts the kete ingests, not made for Sonny"),
     (r"/data/(derived|raw)/", "data folder: downloads and generated fragments"),
-    (r"(^|/)[^/]*template[^/]*\.html$", "template file"),
+    (r"(?i)(^|/)[^/]*template[^/]*\.html$", "template file"),
     (r"(?i)(^|/)[^/]*[ ._-](backup|bak|old|copy)(\.[^/.]+)?\.html?$", "backup copy of another page"),
     (r"^cisra/CIS_Controls_Guide[^/]*\.pdf$", "third-party reference document (CIS Controls guide)"),
     (r"^drptool/nist\.sp\.[^/]*\.pdf$", "third-party reference document (NIST SP 800-184)"),
