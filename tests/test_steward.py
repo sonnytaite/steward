@@ -301,7 +301,35 @@ class ConciergeTests(Fixture):
         h = m.render_artefacts(v)
         for sid in ('id="research"', 'id="articles"', 'id="visualisations"', 'id="unfiled"'): self.assertIn(sid, h)
         self.assertIn("because &lt;I said&gt;", h); self.assertIn('hidden>', h)  # filter boxes stay hidden without scripts
-        self.assertIn(">PDF</a>", h); self.assertIn("Unfiled</b> <span class=\"muted acount\" data-total=\"0\">(0)", h)
+        self.assertIn(">PDF</a>", h); self.assertIn('<details class="major arts" id="unfiled" open><summary><h2>Unfiled <span class="muted acount" data-total="0">(0)', h)
+        for i in v["items"]: self.assertIn(f'id="{m.art_anchor(i)}"', h)  # every card carries its stable id
+
+    def test_major_sections_are_native_details(self):
+        m = self._mod()
+        h = m.render_dashboards(m.dashboards({"_dashboards": [
+            {"kind": "dashboard", "name": "A", "url": "http://127.0.0.1:9", "start_cmd": "a"}, {"kind": "service", "name": "S", "url": "http://127.0.0.1:8", "start_cmd": "s"}]}))
+        self.assertIn('<details class="major" id="dashboards" open><summary><h2>Dashboards', h)
+        self.assertIn('<details class="major" id="services" open><summary><h2>Services', h)
+        self.assertIn('id="d-a"', h); self.assertIn('id="s-s"', h)
+        tpl = (HERE.parent / "templates" / "console.html").read_text()
+        self.assertIn("localStorage", tpl); self.assertIn("try { localStorage.setItem", tpl); self.assertIn("<!--__AGENTS__-->", tpl)
+
+    def test_recent_orders_strictly_by_time_and_folds_after_eight(self):
+        m = self._mod(); now = dt.datetime(2026, 9, 28, 12)
+        ts = lambda h: int((now - dt.timedelta(hours=h)).timestamp())
+        dash = [{"kind": "dashboard", "name": "Dash", "url": "http://127.0.0.1:9", "start_cwd": "~/p", "start_cmd": "run", "repo": "~/p", "last_touched": "2026-09-28", "last_hash": "abc", "last_ts": ts(1)}]
+        art = {"items": [{"category": "research", "title": f"Page {n}", "rel": f"research/p/{n}.html", "path": f"/x/{n}.html", "project": "research/p",
+                          "last_touched": "2026-09-2x", "last_hash": "h", "last_ts": ts(2 + n)} for n in range(20)]}
+        ents = [{"id": "ag", "title": "Agent", "path": "/x/ag", "is_agent": True, "last_commit": "2026-09-28", "last_hash": "g1", "last_ts": ts(0), "how_to_run": ["make go"]},
+                {"id": "old", "title": "Old", "path": "/x/old", "is_agent": True, "last_commit": "2026-01-01", "last_ts": ts(24 * 60)}]
+        items = m.recent_items(dash, art, ents, {})
+        self.assertEqual([r["title"] for r in items[:3]], ["Agent", "Dash", "Page 0"])
+        self.assertEqual(items[0]["cmd"], "make go"); self.assertEqual(items[1]["cmd"], "cd ~/p && run")
+        h = m.render_recent(items, now)
+        self.assertEqual(h.count('class="rrow"'), 16)
+        self.assertIn('<details class="more rmore"><summary>show 16', h)
+        self.assertIn('href="#agents" data-target="g-ag" data-agent="ag"', h)
+        self.assertIn('href="#d-dash"', h); self.assertNotIn(">Old<", h)
 
     def test_brief_facts_carry_drift(self):
         self.test_note_then_drift()

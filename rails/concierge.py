@@ -14,7 +14,7 @@ The registry is derived; the overlay is Sonny's words; the console is a view. No
 State lives in <vault>/surfaces/steward/concierge/. stdlib only.
 """
 from __future__ import annotations
-import argparse, datetime as dt, json, os, re, subprocess, sys, html
+import argparse, datetime as dt, hashlib, json, os, re, subprocess, sys, html
 from urllib.parse import quote
 from pathlib import Path
 
@@ -74,6 +74,7 @@ def describe_repo(repo: Path, cfg: dict) -> dict | None:
     return {
         "id": repo.name, "path": str(repo), "title": str(title).strip(), "summary": first_para(md), "artefacts": arts, "code": code,
         "declared_stage": stage.group(2).strip()[:160] if stage else "", "how_to_run": runs, "last_commit": last,
+        "last_ts": int(git(repo, "log", "-1", "--format=%ct") or 0), "last_hash": git(repo, "log", "-1", "--format=%h"),
         "commits": int(count or 0), "commits_7d": len(recent7), "commits_30d": len(recent30), "recent": subjects, "is_agent": is_agent,
     }
 
@@ -121,12 +122,92 @@ def dashboards(ov: dict) -> list:
     out = []
     for d in ov.get("_dashboards", []):
         d = dict(d); repo = Path(d["repo"]).expanduser() if d.get("repo") else None
-        line = git(repo, "log", "-1", "--format=%ad|%h|%s", "--date=short") if repo and (repo / ".git").exists() else ""
-        date, sha, subject = (line.split("|", 2) + ["", "", ""])[:3]
-        d.update(last_touched=date, last_hash=sha, last_subject=subject[:160])
+        line = git(repo, "log", "-1", "--format=%ad|%h|%ct|%s", "--date=short") if repo and (repo / ".git").exists() else ""
+        date, sha, ts, subject = (line.split("|", 3) + ["", "", "", ""])[:4]
+        d.update(last_touched=date, last_hash=sha, last_subject=subject[:160], last_ts=int(ts or 0))
         if d.get("url", "").startswith("file://~"): d["url"] = "file://" + str(Path("~").expanduser()) + d["url"][len("file://~"):]
         out.append(d)
     return out
+
+
+def slug(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "-", str(s)).strip("-").lower()
+
+
+def dash_anchor(d: dict) -> str:
+    """Stable in-page id for a dashboard, service or dev server card: its kind and name."""
+    return f'{ {"service": "s", "dev": "v"}.get(d.get("kind"), "d") }-{slug(d["name"])}'
+
+
+def art_anchor(i: dict) -> str:
+    """Stable in-page id for an artefact card: a short hash of its path under ~/Projects, so it survives regeneration."""
+    return i.get("anchor") or "a-" + hashlib.sha1(i["rel"].encode()).hexdigest()[:10]
+
+
+def agent_anchor(agent_id: str) -> str:
+    return "g-" + slug(agent_id)  # the template's agent cards carry the same id
+
+
+CMD_LINE = re.compile(r"^(cd|source|\.|python3?|uv|uvx|pip|npm|npx|pnpm|yarn|node|make|docker|bash|sh|claude|git|ollama|\.venv/|\./|~/|/)\S*(\s|$)")  # a shell command, not prose
+RECENT_LABEL = {"dashboard": "Dashboard", "service": "Service", "dev": "Dev server", "visualisations": "Visualisation", "articles": "Article",
+                "research": "Research", "unfiled": "Unfiled", "agent": "Agent"}
+
+
+def recent_items(dash: list, art: dict, entries: list, ov: dict) -> list:
+    """Everything with a last-touched time, newest first by commit time (file time where there is no commit); ties keep title order."""
+    out = []
+    for d in dash:
+        cmd = f"cd {d['start_cwd']} && {d['start_cmd']}" if d.get("start_cwd") and d["start_cwd"] != "~" else d.get("start_cmd", "")
+        out.append({"kind": d.get("kind", "dashboard"), "title": d["name"], "anchor": dash_anchor(d), "direct": d["url"], "date": d.get("last_touched", ""),
+                    "hash": d.get("last_hash", ""), "subject": d.get("last_subject", ""), "ts": d.get("last_ts", 0),
+                    "project": Path(d["repo"]).expanduser().name if d.get("repo") else "", "blurb": d.get("what", ""), "cmd": cmd})
+    for i in art["items"]:
+        out.append({"kind": i["category"], "title": i["title"], "anchor": art_anchor(i), "direct": "file://" + quote(i["path"]), "date": i["last_touched"],
+                    "hash": i.get("last_hash", ""), "subject": i.get("last_subject", ""), "ts": i.get("last_ts", 0), "project": i["project"],
+                    "blurb": i.get("blurb", ""), "cmd": ""})
+    for x in entries:
+        if not x.get("is_agent"): continue
+        o = ov.get(x["id"], {}); lines = (o.get("run") or "").splitlines() + [l for r in x.get("how_to_run") or [] for l in r.splitlines()]
+        run = next((l.strip() for l in lines if CMD_LINE.match(l.strip())), "")
+        out.append({"kind": "agent", "title": x["title"] if len(x["title"]) <= 60 else x["id"], "anchor": agent_anchor(x["id"]), "agent": x["id"],
+                    "direct": "file://" + quote(x["path"]), "date": x.get("last_commit", ""), "hash": x.get("last_hash", ""), "subject": "",
+                    "ts": x.get("last_ts", 0), "project": x["id"], "blurb": o.get("next") or x.get("summary", ""), "cmd": run})
+    return sorted((r for r in out if r["ts"]), key=lambda r: (-r["ts"], r["title"].lower()))
+
+
+def render_recent(items: list, now: dt.datetime | None = None) -> str:
+    """The Recent index: one line per item, the title an in-page link to its full card, a direct link beside it.
+    Eight rows, then a native fold with up to sixteen from the last fourteen days."""
+    if not items: return ""
+    e = lambda s: html.escape(str(s or ""), quote=True)
+    now = now or dt.datetime.now(); cutoff = (now - dt.timedelta(days=14)).timestamp()
+    top = items[:8]; more = [r for r in items[8:16] if r["ts"] >= cutoff]
+    shown = top + more
+
+    def line(r):
+        agent = f' data-agent="{e(r["agent"])}"' if r.get("agent") else ""
+        href = "#agents" if r.get("agent") else "#" + r["anchor"]  # agent cards are drawn by script; without it the link lands on Agents
+        hsh = f' <code title="{e(r["subject"])}">{e(r["hash"])}</code>' if r.get("hash") else ' <span class="muted">file date</span>'
+        cmd = (f'<span class="rcmd"><code>{e(r["cmd"])}</code><button class="copy rcopy" type="button" title="copy the start command">copy</button></span>' if r.get("cmd") else "")
+        return (f'<li class="rrow"><span class="tag rk rk-{e(r["kind"])}">{e(RECENT_LABEL.get(r["kind"], r["kind"]))}</span>'
+                f'<a class="rtitle" href="{e(href)}" data-target="{e(r["anchor"])}"{agent} title="{e(r["blurb"][:200])}">{e(r["title"])}</a>'
+                f'<a class="rdirect" href="{e(r["direct"])}" target="_blank" rel="noopener" title="open {e(r["direct"])}" aria-label="open directly">&#8599;</a>'
+                f'<span class="rmeta">{e(r["date"])}{hsh} · {e(r["project"])}</span>{cmd}</li>')
+
+    rng = f'{dt.date.fromtimestamp(shown[-1]["ts"]).isoformat()} to {dt.date.fromtimestamp(shown[0]["ts"]).isoformat()}'
+    h = major_open("recent", f'Recent, most recently touched first <span class="muted rrange">({e(rng)})</span>', "")
+    h += ('<p class="lead">Last week\'s work to pick up: every dashboard, visualisation, article, research page, unfiled page and agent, ordered by its last commit '
+          '(file date where there is none). The title jumps to its card below; the arrow opens it directly.</p>')
+    h += f'<ul class="recent">{"".join(line(r) for r in top)}</ul>'
+    if more: h += f'<details class="more rmore"><summary>show 16 <span class="muted">({len(more)} more from the last fourteen days)</span></summary><ul class="recent">{"".join(line(r) for r in more)}</ul></details>'
+    return h + "</details>"
+
+
+def major_open(sid: str, name: str, n, extra: str = "", h2cls: str = "") -> str:
+    """Open tag of one major section: a native <details> (works with scripts blocked), open by default, the heading and its
+    count as the summary line, styled like the Dev servers fold. The template's script remembers open or closed per browser."""
+    cnt = f' <span class="muted acount" data-total="{n}">({n})</span>' if n != "" else ""
+    return f'<details class="major{extra}" id="{sid}" open><summary><h2{f" class={h2cls}" if h2cls else ""}>{name}{cnt}</h2></summary>'
 
 
 def render_dashboards(items: list) -> str:
@@ -150,7 +231,7 @@ def render_dashboards(items: list) -> str:
         note = f'<div class="meta">{e(d["note"])}</div>' if d.get("note") else ""
         repo = f' · <code>{e(d["repo"])}</code>' if d.get("repo") else ""
         nxt = f'<p><b>Next:</b> {e(d["next"])}</p>' if d.get("next") else '<p class="muted">Next: not recorded</p>'
-        return (f'<div class="card dash" data-url="{e(d["url"])}"><div class="dhead"><h3>{e(d["name"])}</h3>{status(d)}</div>'
+        return (f'<div class="card dash" id="{e(dash_anchor(d))}" data-url="{e(d["url"])}"><div class="dhead"><h3>{e(d["name"])}</h3>{status(d)}</div>'
                 f'<div class="meta"><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a> {hnz}</div>'
                 f'<div class="cmdrow"><pre class="cmd">{e(cmd(d))}</pre><button class="copy" type="button" title="copy the start command">copy</button></div>{setup}'
                 f'<p>{e(d.get("what"))} {e(d.get("why"))}</p>{nxt}{note}'
@@ -158,24 +239,25 @@ def render_dashboards(items: list) -> str:
 
     def row(d):
         hnz = ' <span class="tag warn">Health NZ work</span>' if d.get("scope") == "hnz" else ""
-        return (f'<tr><td><b>{e(d["name"])}</b>{hnz}</td><td><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a></td>'
+        return (f'<tr id="{e(dash_anchor(d))}"><td><b>{e(d["name"])}</b>{hnz}</td><td><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a></td>'
                 f'<td><code>{e(cmd(d))}</code></td><td>{e(d.get("what"))}</td><td class="muted">{touched(d)}</td></tr>')
 
     dash = [d for d in items if d.get("kind", "dashboard") == "dashboard"]
     dev = [d for d in items if d.get("kind") == "dev"]
     svc = [d for d in items if d.get("kind") == "service"]
     if not items: return ""
-    h = ('<section id="dashboards"><div class="dtop"><h2>Dashboards <span class="muted">(' + str(len(dash)) + ')</span></h2>'
+    h = (major_open("dashboards", "Dashboards", len(dash)) + '<div class="dtop">'
          '<button class="checknow" id="checknow" type="button">check now</button><span class="gen" id="checked">live status needs scripts; the links and commands work without them</span></div>'
          '<p class="lead">Every local dashboard you have built, with the command to start it if it is down. Status is checked from this page every 60 seconds: '
          '<span class="dot up"></span> up, <span class="dot down"></span> down, <span class="dot"></span> checking.</p>'
          f'<div class="grid dgrid">{"".join(dcard(d) for d in dash)}</div>')
-    if svc:
-        h += f'<h2>Services <span class="muted">({len(svc)})</span></h2><div class="grid dgrid">{"".join(dcard(d) for d in svc)}</div>'
     if dev:
         h += (f'<details class="devs"><summary>Dev servers <span class="muted">({len(dev)}), Next.js apps that all default to port 3000, so only one runs at a time; no live status</span></summary>'
               f'<table><tr><th>Repo</th><th>URL</th><th>Start</th><th>What</th><th>Last touched</th></tr>{"".join(row(d) for d in dev)}</table></details>')
-    return h + "</section>"
+    h += "</details>"
+    if svc:
+        h += major_open("services", "Services", len(svc)) + f'<div class="grid dgrid">{"".join(dcard(d) for d in svc)}</div></details>'
+    return h
 
 
 # ----------------------------------------------------------------------------- artefacts
@@ -258,11 +340,12 @@ def pdf_title(f: Path) -> str:
 
 
 def git_index(repo: Path) -> dict:
-    """One pass over a repo's history: relative path -> (date, short hash, subject) of the last commit that touched it."""
+    """One pass over a repo's history: relative path -> (date, short hash, subject, unix time) of the last commit that touched it."""
     out, cur = {}, None
     mark = "@@concierge@@"  # a text marker: str.splitlines() treats control separators such as \x1e as line breaks
-    for line in git(repo, "log", f"--format={mark}%ad|%h|%s", "--date=short", "--name-only", "--no-renames").splitlines():
-        if line.startswith(mark): cur = tuple((line[len(mark):].split("|", 2) + ["", "", ""])[:3]); continue
+    for line in git(repo, "log", f"--format={mark}%ad|%h|%ct|%s", "--date=short", "--name-only", "--no-renames").splitlines():
+        if line.startswith(mark):
+            dte, sha, ts, subj = (line[len(mark):].split("|", 3) + ["", "", "", ""])[:4]; cur = (dte, sha, subj, int(ts or 0)); continue
         if line and cur and line not in out: out[line] = cur
     return out
 
@@ -307,7 +390,7 @@ def research_project_facts(root: Path, name: str, gi: dict) -> dict:
     fm, _, _ = parse_frontmatter(md) if md else ({}, "", "")
     st = STAGE_RE.search(md); status = str(fm.get("status") or (st.group(2) if st else "")).strip()
     dates = [v for k, v in gi.items() if k.startswith(name + "/")]
-    last = max(dates, key=lambda d: d[0]) if dates else ("", "", "")
+    last = max(dates, key=lambda d: d[3]) if dates else ("", "", "", 0)
     return {"name": name, "title": (re.search(r"(?m)^# (.+)$", md) or [None, name])[1].strip(), "status": re.sub(r"\*\*", "", status)[:200],
             "last_touched": last[0], "last_hash": last[1], "last_subject": last[2][:160], "path": str(root / name)}
 
@@ -379,8 +462,8 @@ def _artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_pre
     cat, rule = classify(rel, facts, md, research_prefix, share_prefix)
     vis = classify(rel, facts, md, "", "")[1] if cat == "research" and classify(rel, facts, md, "", "")[0] == "visualisations" else ""
     in_repo = os.path.relpath(f, root); g = gi.get(in_repo)
-    if g: date, sha, subj, committed = g[0], g[1], g[2][:160], True
-    else: date, sha, subj, committed = dt.date.fromtimestamp(f.stat().st_mtime).isoformat(), "", "", False
+    if g: date, sha, subj, committed, ts = g[0], g[1], g[2][:160], True, g[3]
+    else: date, sha, subj, committed, ts = dt.date.fromtimestamp(f.stat().st_mtime).isoformat(), "", "", False, int(f.stat().st_mtime)
     if rel.startswith(research_prefix):
         group = in_repo.split("/", 1)[0] if "/" in in_repo else ""; project, ppath = f"research/{group}", str(research / group)
     else:
@@ -397,7 +480,7 @@ def _artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_pre
     return {"path": str(f), "rel": rel, "ext": f.suffix.lower().lstrip("."), "title": md.get("title") or facts.get("title") or f.stem.replace("-", " "),
             "blurb": md.get("blurb") or facts.get("blurb", ""), "date": md.get("date") or (DATE_IN_NAME.search(f.name).group(1) if DATE_IN_NAME.search(f.name) else ""),
             "category": cat, "rule": rule, "group": group, "project": project, "project_path": ppath, "pdf": str(pdf) if pdf else "",
-            "data": data, "last_touched": date, "last_hash": sha, "last_subject": subj, "committed": committed, "size": f.stat().st_size,
+            "data": data, "last_touched": date, "last_hash": sha, "last_ts": ts, "anchor": "a-" + hashlib.sha1(rel.encode()).hexdigest()[:10], "last_subject": subj, "committed": committed, "size": f.stat().st_size,
             "scope": "hnz" if root.name in hnz else "", "looks_visual": vis}
 
 
@@ -444,7 +527,7 @@ def render_artefacts(view: dict) -> str:
         a, k = links(i)
         why = f'<div class="why"><b>Why:</b> {e(i["why"])}</div>' if i.get("why") else ""
         blurb = f'<div class="ablurb">{e(i["blurb"][:260])}</div>' if i.get("blurb") else ""
-        return (f'<li class="aitem"><div class="aline">{a} <span class="kinds">{k}</span>{tags(i)}</div>{blurb}{why}'
+        return (f'<li class="aitem" id="{e(art_anchor(i))}"><div class="aline">{a} <span class="kinds">{k}</span>{tags(i)}</div>{blurb}{why}'
                 f'<div class="meta">{(src(i) + " · ") if show_src else ""}<code>{e(Path(i["rel"]).name)}</code> · last touched {touched(i)} · {e(human_size(i["size"]))}</div></li>')
 
     def card(i, chip=False):
@@ -455,12 +538,12 @@ def render_artefacts(view: dict) -> str:
         data = f'<div class="meta"><b>Data:</b> {e(i["data"])}</div>' if i.get("data") else '<div class="meta"><b>Data:</b> not stated on the page or in a nearby README</div>'
         why = f'<div class="why"><b>Why:</b> {e(i["why"])}</div>' if i.get("why") else ""
         date = f' · dated {e(i["date"])}' if i.get("date") else ""
-        return (f'<div class="card art aitem">{pc}<h3>{a}</h3><div class="meta"><span class="kinds">{k}</span>{tags(i)}{date}</div>{what}{why}{data if i["category"] == "visualisations" else ""}'
+        return (f'<div class="card art aitem" id="{e(art_anchor(i))}">{pc}<h3>{a}</h3><div class="meta"><span class="kinds">{k}</span>{tags(i)}{date}</div>{what}{why}{data if i["category"] == "visualisations" else ""}'
                 f'<div class="meta">{src(i)} · last touched {touched(i)} · {e(human_size(i["size"]))}</div></div>')
 
     def head(cid, name, n, lead):
-        return (f'<section class="arts" id="{cid}"><div class="dtop"><h2>{name} <span class="muted acount" data-total="{n}">({n})</span></h2>'
-                f'<input class="afilter" type="search" placeholder="filter {name.lower()}…" aria-label="filter {name.lower()}" hidden></div><p class="lead">{lead}</p>')
+        return (major_open(cid, name, n, " arts") + f'<div class="dtop"><input class="afilter" type="search" placeholder="filter {name.lower()}…" '
+                f'aria-label="filter {name.lower()}" hidden></div><p class="lead">{lead}</p>')
 
     h = ""
     # Research, grouped by project, newest first; long lists fold after eight
@@ -476,14 +559,14 @@ def render_artefacts(view: dict) -> str:
         fold = f'<details class="more"><summary>{len(more)} more pages</summary><ul class="alist">{"".join(row(i, False) for i in more)}</ul></details>' if more else ""
         h += (f'<div class="agroup"><div class="ghead"><a class="gname" href="{e(uri(p.get("path") or lst[0]["project_path"]))}">{e(g)}</a> <span class="muted">({len(lst)})</span> {status}'
               f'<span class="meta"> {pt}</span></div><ul class="alist">{rows}</ul>{fold}</div>')
-    h += "</section>"; research_html, h = h, ""
+    h += "</details>"; research_html, h = h, ""
     # Articles: briefs, digests, packs
     arts = by["articles"]
     h += head("articles", "Articles", len(arts), "HBR-style briefs, digests and packs from the surface plugin (the vault's <code>articles/</code> and pack folders), HTML and PDF side by side. Title, date and summary come from each article's front matter where it has one.")
     for g, label in (("briefs", "Briefs and one-pagers"), ("digests", "Digests"), ("packs", "Packs")):
         lst = sorted((i for i in arts if i["group"] == g), key=lambda x: (x.get("date") or x["last_touched"]), reverse=True)
         if lst: h += f'<div class="agroup"><div class="ghead"><b>{label}</b> <span class="muted">({len(lst)})</span></div><div class="grid agrid">{"".join(card(i) for i in lst)}</div></div>'
-    h += "</section>"; articles_html, h = h, ""
+    h += "</details>"; articles_html, h = h, ""
     vis = sorted(by["visualisations"], key=lambda x: x["last_touched"], reverse=True)
     h += head("visualisations", "Visualisations", len(vis), f"Standalone views you open to see rather than read, ordered by source project; click a project to filter ({len({i['project'] for i in vis})} projects). What it shows and the data behind it are quoted from the page or a README beside it; where neither says, it says so.")
     vgroups = {}  # ordered by source project (most recently touched project first), a project chip on each card, chips above filter
@@ -491,26 +574,27 @@ def render_artefacts(view: dict) -> str:
     chips = "".join(f'<button type="button" class="pchip" data-q="{e(g)}">{e(g.replace("research/", ""))} <span class="muted">{len(lst)}</span></button>' for g, lst in vgroups.items())
     h += f'<div class="pchips" aria-label="filter by project">{chips}</div>'
     h += f'<div class="grid agrid">{"".join(card(i, chip=True) for lst in vgroups.values() for i in lst)}</div>'
-    h += "</section>"
+    h += "</details>"
     h += articles_html + research_html  # smallest first, so Research's length never buries the other two
     un = sorted(by["unfiled"], key=lambda x: x["last_touched"], reverse=True)
     ex = view.get("excluded", [])
     reasons = {}
     for x in ex: reasons[x["reason"]] = reasons.get(x["reason"], 0) + x.get("files", 1)
     exrows = "".join(f'<tr><td><code>{e(x["path"])}</code></td><td>{x.get("files", 1)}</td><td>{e(x["reason"])}</td></tr>' for x in ex)
-    h += (f'<section class="arts" id="unfiled"><details class="devs"><summary><b>Unfiled</b> <span class="muted acount" data-total="{len(un)}">({len(un)})</span> '
-          f'<span class="muted">pages the rules could not place; file one by giving it a category in the overlay\'s <code>_artefacts</code></span></summary>'
+    h += (major_open("unfiled", "Unfiled", len(un), " arts") + f'<p class="lead">Pages the rules could not place, folded so nothing is dropped silently; '
+          f'file one by giving it a category in the overlay\'s <code>_artefacts</code>. Every exclusion is listed below with its reason.</p>'
+          f'<details class="devs"><summary>Unfiled pages <span class="muted">({len(un)})</span></summary>'
           f'<input class="afilter" type="search" placeholder="filter unfiled…" aria-label="filter unfiled" hidden><ul class="alist">{"".join(row(i) for i in un)}</ul></details>'
           f'<details class="devs"><summary><b>Excluded</b> <span class="muted">({sum(reasons.values())} files, by the documented exclusion list)</span></summary>'
           f'<p class="meta">{e("; ".join(f"{r}: {n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])))}. The list is ART_PRUNE_DIRS and ART_EXCLUDE in <code>rails/concierge.py</code>; '
           f'dependency, virtualenv, cache and git folders are skipped without listing.</p><table><tr><th>Path</th><th>Files</th><th>Why</th></tr>'
-          f'{exrows}</table></details></section>')
+          f'{exrows}</table></details></details>')
     return h
 
 
 def artefact_jump(view: dict) -> str:
     c = lambda k: sum(1 for i in view["items"] if i["category"] == k)
-    return (f'<nav class="jump" aria-label="sections"><a href="#dashboards">Dashboards</a><a href="#visualisations">Visualisations ({c("visualisations")})</a>'
+    return (f'<nav class="jump" aria-label="sections"><a href="#recent">Recent</a><a href="#dashboards">Dashboards</a><a href="#services">Services</a><a href="#visualisations">Visualisations ({c("visualisations")})</a>'
             f'<a href="#articles">Articles ({c("articles")})</a><a href="#research">Research ({c("research")})</a>'
             f'<a href="#unfiled">Unfiled ({c("unfiled")})</a><a href="#agents">Agents</a></nav>')
 
@@ -531,9 +615,10 @@ def cmd_crawl(a, cfg):
             md = (proj / "README.md").read_text(encoding="utf-8", errors="replace") if (proj / "README.md").exists() else ""
             stage = STAGE_RE.search(md)
             last = git(root, "log", "-1", "--format=%ad", "--date=short", "--", str(proj.relative_to(root)))
+            lts = int(git(root, "log", "-1", "--format=%ct", "--", str(proj.relative_to(root))) or 0); lh = git(root, "log", "-1", "--format=%h", "--", str(proj.relative_to(root)))
             entries.append({"id": f"research/{proj.name}", "path": str(proj), "title": (re.search(r"^# (.+)$", md, flags=re.M) or [None, proj.name])[1],
                             "summary": first_para(md), "artefacts": [n for n in ("agents/", "prompts/") if (proj / n.rstrip("/")).exists()], "code": False,
-                            "declared_stage": stage.group(2).strip()[:160] if stage else "", "how_to_run": [], "last_commit": last, "commits": 0,
+                            "declared_stage": stage.group(2).strip()[:160] if stage else "", "how_to_run": [], "last_commit": last, "last_ts": lts, "last_hash": lh, "commits": 0,
                             "commits_7d": len(git(root, "log", "--since=7 days ago", "--format=%s", "--", str(proj.relative_to(root))).splitlines()),
                             "commits_30d": len(git(root, "log", "--since=30 days ago", "--format=%s", "--", str(proj.relative_to(root))).splitlines()),
                             "recent": git(root, "log", "-6", "--format=%ad %s", "--date=short", "--", str(proj.relative_to(root))).splitlines(),
@@ -653,7 +738,7 @@ def cmd_console(a, cfg):
                       "research": git(Path(cfg["research"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:40]},
             "stages": cfg.get("concierge_stages", ["idea", "spec", "prototype", "harness", "sandbox", "pilot", "production", "parked"])}
     tpl = (HERE.parent / "templates" / "console.html").read_text(encoding="utf-8")
-    out = tpl.replace("<!--__JUMP__-->", artefact_jump(art)).replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("<!--__ARTEFACTS__-->", render_artefacts(art)).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
+    out = tpl.replace("<!--__JUMP__-->", artefact_jump(art)).replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("<!--__RECENT__-->", render_recent(recent_items(dash, art, reg["entries"], ov))).replace("<!--__ARTEFACTS__-->", render_artefacts(art)).replace("<!--__AGENTS__-->", major_open("agents", "Agents", f"{sum(1 for x in reg['entries'] if x['is_agent'])} of {len(reg['entries'])} repos", h2cls="break")).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     target = Path(a.out).expanduser() if a.out else sd / "console.html"
     target.write_text(out, encoding="utf-8"); print(f"console -> {target}")
 

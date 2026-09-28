@@ -39,7 +39,10 @@ table{border-collapse:collapse;width:100%;font-size:13.5px}td,th{border-top:1px 
 .copy{border:1px solid var(--rule);background:var(--panel);color:var(--muted);border-radius:6px;cursor:pointer;font-size:12px;padding:0 8px}.copy:hover{color:var(--ink);border-color:var(--accent)}
 details.devs{margin:14px 0 4px}details.devs summary{cursor:pointer;font-size:14px;color:var(--muted)}details.devs summary b{color:var(--ink)}details.devs table{margin-top:8px}
 nav.jump{display:flex;flex-wrap:wrap;gap:4px 16px;margin:12px 0 0;font-size:13.5px}nav.jump a{color:var(--accent);text-decoration:none}nav.jump a:hover{text-decoration:underline}
-section.arts{margin-top:30px;padding-top:6px;border-top:1px solid var(--rule)}section.arts .lead{font-size:14.5px;color:var(--muted);margin:6px 0 12px}
+.arts .lead{font-size:14.5px;color:var(--muted);margin:6px 0 12px}
+details.major{margin-top:22px;padding-top:4px}details.major+details.major,.arts{border-top:1px solid var(--rule);margin-top:26px;padding-top:8px}
+details.major>summary{cursor:pointer;font-size:17px;color:var(--muted);margin:0}details.major>summary h2{display:inline;margin:0}details.major>summary:hover h2{color:var(--ink)}
+details.major>.dtop{margin-top:8px}details.major:not([open]){padding-bottom:2px}
 .afilter{padding:5px 10px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);color:var(--ink);font-size:13.5px;width:min(300px,100%)}
 .agroup{margin:0 0 14px}.ghead{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;margin:0 0 4px;font-size:14.5px}.gname{font-weight:600;color:var(--ink)}
 .astatus{font-size:13px;color:var(--muted);background:var(--code);border-radius:6px;padding:1px 7px;max-width:min(640px,100%);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -50,9 +53,17 @@ ul.alist{list-style:none;padding:0 0 0 12px;margin:0;border-left:2px solid var(-
 .ablurb{font-size:13.5px;margin:1px 0}.why{font-size:13.5px;margin:3px 0}.aitem .meta{font-size:12.5px;color:var(--muted)}.aitem .meta a{color:var(--muted)}.aitem code{overflow-wrap:anywhere}
 .agrid{grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))}.card.art{cursor:default;display:flex;flex-direction:column;gap:3px;min-width:0}.card.art h3{font-size:15px;margin:0}.card.art p{margin:2px 0}
 .pchips{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 12px}.pchip{border:1px solid var(--rule);background:var(--panel);color:var(--ink);border-radius:999px;padding:2px 10px;font-size:12.5px;cursor:pointer}.pchip:hover,.pchip.on{border-color:var(--accent);color:var(--accent)}.pchips:not(.live) .pchip{cursor:default}a.tag.pc{align-self:flex-start;text-decoration:none}
+ul.recent{list-style:none;margin:0;padding:0}.rrow .rcmd{margin-left:auto}
+.rrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:5px 0;border-bottom:1px solid var(--rule);min-width:0}
+.rrow .rk{min-width:86px;text-align:center}.rk-dashboard,.rk-service,.rk-dev{background:var(--oksoft);color:var(--ok)}.rk-agent{background:var(--warnsoft);color:var(--warn)}
+.rtitle{font-weight:600;color:var(--ink);text-decoration:none;overflow-wrap:anywhere}.rtitle:hover{color:var(--accent);text-decoration:underline}
+.rdirect{color:var(--accent);text-decoration:none;font-size:14px}.rmeta{font-size:12.5px;color:var(--muted)}.rrange{text-transform:none;letter-spacing:0;font-size:14px}
+.rcmd{display:inline-flex;gap:4px;align-items:center;min-width:0;max-width:100%}.rcmd code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px;user-select:all;font-size:11.5px}.rcopy{padding:1px 7px;font-size:11px}
+details.rmore{margin:6px 0 0}.card:target,li:target,tr:target{outline:2px solid var(--accent);outline-offset:3px;border-radius:10px}
 details.more{margin:2px 0 0 14px}details.more summary{cursor:pointer;font-size:13px;color:var(--muted)}
 .aitem.hide,.agroup.hide{display:none}
-h2.break{font-size:20px;color:var(--ink);margin:36px 0 0;padding-top:16px;border-top:2px solid var(--rule);text-transform:none;letter-spacing:0}
+h2.break{font-size:20px;color:var(--ink);margin:36px 0 0;text-transform:none;letter-spacing:0}
+details#agents{border-top:2px solid var(--rule);margin-top:36px;padding-top:14px}details#agents>summary{font-size:20px}details#agents>summary h2.break{margin:0}details#agents>nav{margin-top:12px}
 @media (max-width:420px){.dgrid{grid-template-columns:1fr}}
 @media print{#detail{position:static;width:auto;box-shadow:none}}
 </style>
@@ -60,12 +71,14 @@ h2.break{font-size:20px;color:var(--ink);margin:36px 0 0;padding-top:16px;border
 <body>
 <header><h1>Concierge</h1><span class="gen" id="gen"></span><span class="gen">the agent that keeps track of the agents · local, derived from git, READMEs, handovers and the vault · overlay in your words</span></header>
 <!--__JUMP__-->
+<!--__RECENT__-->
 <!--__DASHBOARDS__-->
 <!--__ARTEFACTS__-->
-<h2 class="break" id="agents">Agents</h2>
+<!--__AGENTS__-->
 <nav id="nav"></nav>
 <input class="search" id="q" placeholder="filter by name, artefact, project, word…">
 <div id="view"></div>
+</details>
 <aside id="detail"><button class="close" onclick="closeDetail()">×</button><div id="detailBody"></div></aside>
 <script>
 const D = /*__DATA__*/null;
@@ -80,7 +93,7 @@ function nav(){ $("#nav").innerHTML = views.map(v => `<button class="${v===cur?'
 function go(v){ cur = v; nav(); render(); }
 function match(o){ if(!q) return true; return JSON.stringify(o).toLowerCase().includes(q.toLowerCase()); }
 function card(e){ const o = ov(e.id), d = days(e.last_commit), cls = d>30?'stale':(d<=7?'fresh':'');
-  return `<div class="card ${cls}" onclick="detail('${e.id}')"><h3>${esc(e.title.length>60?e.id:e.title)}</h3><div class=meta>${esc(e.id)} · last ${esc(e.last_commit)} (${d}d) · ${e.commits} commits${e.commits_7d?` · <b>${e.commits_7d} this week</b>`:''}</div>
+  return `<div class="card ${cls}" id="g-${e.id.replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'').toLowerCase()}" onclick="detail('${e.id}')"><h3>${esc(e.title.length>60?e.id:e.title)}</h3><div class=meta>${esc(e.id)} · last ${esc(e.last_commit)} (${d}d) · ${e.commits} commits${e.commits_7d?` · <b>${e.commits_7d} this week</b>`:''}</div>
   <div style="margin-top:6px">${e.artefacts.map(a=>`<span class=tag>${esc(a)}</span>`).join("")}${e.code?'<span class=tag>code</span>':''}${o.stage?`<span class="tag ok">${esc(o.stage)}</span>`:'<span class="tag warn">no record</span>'}</div>
   <p>${esc(o.next ? "Next: "+o.next : (e.summary||"").slice(0,180))}</p></div>`; }
 function renderAgents(){ const groups = {}; for (const s of [...D.stages,"unrecorded","repo"]) groups[s]=[];
@@ -123,7 +136,7 @@ document.querySelectorAll(".card.dash .copy").forEach(b => b.addEventListener("c
   else { getSelection().selectAllChildren(b.previousElementSibling); b.textContent = "selected"; } }));
 if ($("#checknow")) { $("#checknow").addEventListener("click", checkAll); checkAll(); setInterval(checkAll, 60000); }
 // per-section filter for Research, Articles, Visualisations and Unfiled; without scripts the boxes stay hidden and every entry shows
-document.querySelectorAll("section.arts").forEach(sec => { const box = sec.querySelector(".afilter"); if (!box) return; box.hidden = false;
+document.querySelectorAll(".arts").forEach(sec => { const box = sec.querySelector(".afilter"); if (!box) return; box.hidden = false;
   const count = sec.querySelector(".acount"), total = count ? count.dataset.total : 0;
   box.addEventListener("input", () => { const w = box.value.trim().toLowerCase().split(/\s+/).filter(Boolean); let n = 0;
     sec.querySelectorAll(".aitem").forEach(it => { const ok = w.every(x => it.textContent.toLowerCase().includes(x)); it.classList.toggle("hide", !ok); if (ok) n++; });
@@ -135,6 +148,26 @@ document.querySelectorAll("section.arts").forEach(sec => { const box = sec.query
     sec.querySelectorAll(".pchip").forEach(c => c.classList.toggle("on", box.value === c.dataset.q)); });
   const chips = sec.querySelector(".pchips"); if (chips) { chips.classList.add("live");
     chips.querySelectorAll(".pchip").forEach(c => c.addEventListener("click", () => { box.value = box.value === c.dataset.q ? "" : c.dataset.q; box.dispatchEvent(new Event("input")); })); } });
+// major sections are native <details>, all open by default; each one's open or closed state is remembered per browser.
+// Jumping to a closed section opens it (without scripts the anchor still lands on its summary line).
+const SKEY = "concierge.sections"; let saved = {};
+try { saved = JSON.parse(localStorage.getItem(SKEY) || "{}") || {}; } catch (e) { saved = {}; }
+document.querySelectorAll("details.major").forEach(d => { if (Object.prototype.hasOwnProperty.call(saved, d.id)) d.open = !!saved[d.id];
+  d.addEventListener("toggle", () => { saved[d.id] = d.open; try { localStorage.setItem(SKEY, JSON.stringify(saved)); } catch (e) {} }); });
+function openSection(id){ const el = id && document.getElementById(id); const d = el && el.closest("details.major"); if (d && !d.open) d.open = true; return el; }
+document.querySelectorAll('nav.jump a[href^="#"]').forEach(a => a.addEventListener("click", () => openSection(a.getAttribute("href").slice(1))));
+// Recent: open every fold around the target card before the anchor lands; agent cards are drawn by script, so show the agents view first
+function reveal(el){ for (let d = el && el.closest("details"); d; d = d.parentElement && d.parentElement.closest("details")) d.open = true; }
+document.querySelectorAll("#recent a.rtitle").forEach(a => a.addEventListener("click", ev => {
+  if (a.dataset.agent) { ev.preventDefault(); openSection("agents"); if (cur !== "agents" || q) { cur = "agents"; q = ""; $("#q").value = ""; nav(); render(); }
+    const el = document.getElementById(a.dataset.target); if (el) { el.scrollIntoView({block:"center"}); el.animate([{outline:"2px solid"},{outline:"2px solid transparent"}], {duration:1600}); } return; }
+  const el = document.getElementById(a.dataset.target); if (el) { el.classList.remove("hide"); reveal(el); } }));
+document.querySelectorAll(".rcopy").forEach(b => b.addEventListener("click", () => { const c = b.previousElementSibling, t = c.textContent;
+  const done = () => { b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1500); };
+  if (navigator.clipboard) navigator.clipboard.writeText(t).then(done, () => { getSelection().selectAllChildren(c); b.textContent = "selected"; });
+  else { getSelection().selectAllChildren(c); b.textContent = "selected"; } }));
+window.addEventListener("hashchange", () => { const el = openSection(decodeURIComponent(location.hash.slice(1))); if (el) el.scrollIntoView(); });
+if (location.hash) { const el = openSection(decodeURIComponent(location.hash.slice(1))); if (el) el.scrollIntoView(); }
 nav(); render();
 </script>
 </body>
