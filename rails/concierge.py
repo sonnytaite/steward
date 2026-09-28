@@ -447,14 +447,15 @@ def render_artefacts(view: dict) -> str:
         return (f'<li class="aitem"><div class="aline">{a} <span class="kinds">{k}</span>{tags(i)}</div>{blurb}{why}'
                 f'<div class="meta">{(src(i) + " · ") if show_src else ""}<code>{e(Path(i["rel"]).name)}</code> · last touched {touched(i)} · {e(human_size(i["size"]))}</div></li>')
 
-    def card(i):
+    def card(i, chip=False):
         a, k = links(i)
+        pc = f'<a class="tag pc" href="{e(uri(i["project_path"]))}">{e(i["project"].replace("research/", ""))}</a>' if chip else ""
         none = "What it shows: not stated on the page." if i["category"] == "visualisations" else "No summary on the page (a PDF carries only its title)." if i["ext"] == "pdf" else "No summary on the page."
         what = f'<p>{e(i["blurb"][:300])}</p>' if i.get("blurb") else f'<p class="muted">{none}</p>'
         data = f'<div class="meta"><b>Data:</b> {e(i["data"])}</div>' if i.get("data") else '<div class="meta"><b>Data:</b> not stated on the page or in a nearby README</div>'
         why = f'<div class="why"><b>Why:</b> {e(i["why"])}</div>' if i.get("why") else ""
         date = f' · dated {e(i["date"])}' if i.get("date") else ""
-        return (f'<div class="card art aitem"><h3>{a}</h3><div class="meta"><span class="kinds">{k}</span>{tags(i)}{date}</div>{what}{why}{data if i["category"] == "visualisations" else ""}'
+        return (f'<div class="card art aitem">{pc}<h3>{a}</h3><div class="meta"><span class="kinds">{k}</span>{tags(i)}{date}</div>{what}{why}{data if i["category"] == "visualisations" else ""}'
                 f'<div class="meta">{src(i)} · last touched {touched(i)} · {e(human_size(i["size"]))}</div></div>')
 
     def head(cid, name, n, lead):
@@ -484,8 +485,13 @@ def render_artefacts(view: dict) -> str:
         if lst: h += f'<div class="agroup"><div class="ghead"><b>{label}</b> <span class="muted">({len(lst)})</span></div><div class="grid agrid">{"".join(card(i) for i in lst)}</div></div>'
     h += "</section>"; articles_html, h = h, ""
     vis = sorted(by["visualisations"], key=lambda x: x["last_touched"], reverse=True)
-    h += head("visualisations", "Visualisations", len(vis), "Standalone views you open to see rather than read. What it shows and the data behind it are quoted from the page or a README beside it; where neither says, it says so.")
-    h += f'<div class="grid agrid">{"".join(card(i) for i in vis)}</div></section>'
+    h += head("visualisations", "Visualisations", len(vis), f"Standalone views you open to see rather than read, ordered by source project; click a project to filter ({len({i['project'] for i in vis})} projects). What it shows and the data behind it are quoted from the page or a README beside it; where neither says, it says so.")
+    vgroups = {}  # ordered by source project (most recently touched project first), a project chip on each card, chips above filter
+    for i in vis: vgroups.setdefault(i["project"], []).append(i)
+    chips = "".join(f'<button type="button" class="pchip" data-q="{e(g)}">{e(g.replace("research/", ""))} <span class="muted">{len(lst)}</span></button>' for g, lst in vgroups.items())
+    h += f'<div class="pchips" aria-label="filter by project">{chips}</div>'
+    h += f'<div class="grid agrid">{"".join(card(i, chip=True) for lst in vgroups.values() for i in lst)}</div>'
+    h += "</section>"
     h += articles_html + research_html  # smallest first, so Research's length never buries the other two
     un = sorted(by["unfiled"], key=lambda x: x["last_touched"], reverse=True)
     ex = view.get("excluded", [])
