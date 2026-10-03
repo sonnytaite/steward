@@ -6,7 +6,8 @@
   art       write or update the overlay's record for one artefact (category, title, blurb, why, data), keyed by ~/ path
   console   render console.html (standalone, local) from registry + overlay + research index + vault themes,
             with the Dashboards section (overlay "_dashboards", last touched from git at generation time)
-            and the Research, Articles and Visualisations sections (registry "artefacts", overlay "_artefacts")
+            and the Research, Articles and Visualisations sections (registry "artefacts", overlay "_artefacts"),
+            and the Handovers section (registry "handovers": every handover brief under ~/Projects, newest first)
   where     print "where did I get to" for one agent: derived facts + overlay + latest handover + recent commits
   drift     agents touched since their overlay note, or idle 30+ days with an open next step (feeds the brief)
 
@@ -150,12 +151,16 @@ def agent_anchor(agent_id: str) -> str:
 
 CMD_LINE = re.compile(r"^(cd|source|\.|python3?|uv|uvx|pip|npm|npx|pnpm|yarn|node|make|docker|bash|sh|claude|git|ollama|\.venv/|\./|~/|/)\S*(\s|$)")  # a shell command, not prose
 RECENT_LABEL = {"dashboard": "Dashboard", "service": "Service", "dev": "Dev server", "visualisations": "Visualisation", "articles": "Article",
-                "research": "Research", "unfiled": "Unfiled", "agent": "Agent"}
+                "research": "Research", "unfiled": "Unfiled", "agent": "Agent", "handover": "Handover"}
 
 
-def recent_items(dash: list, art: dict, entries: list, ov: dict) -> list:
+def recent_items(dash: list, art: dict, entries: list, ov: dict, handovers: list | None = None) -> list:
     """Everything with a last-touched time, newest first by commit time (file time where there is no commit); ties keep title order."""
     out = []
+    for i in handovers or []:
+        out.append({"kind": "handover", "title": i["title"], "anchor": i["anchor"], "direct": "file://" + quote(i["path"]), "date": i["last_touched"],
+                    "hash": i.get("last_hash", ""), "subject": i.get("last_subject", ""), "ts": i.get("last_ts", 0), "project": i["project"],
+                    "blurb": i.get("where", ""), "cmd": ""})
     for d in dash:
         cmd = f"cd {d['start_cwd']} && {d['start_cmd']}" if d.get("start_cwd") and d["start_cwd"] != "~" else d.get("start_cmd", "")
         out.append({"kind": d.get("kind", "dashboard"), "title": d["name"], "anchor": dash_anchor(d), "direct": d["url"], "date": d.get("last_touched", ""),
@@ -196,7 +201,7 @@ def render_recent(items: list, now: dt.datetime | None = None) -> str:
 
     rng = f'{dt.date.fromtimestamp(shown[-1]["ts"]).isoformat()} to {dt.date.fromtimestamp(shown[0]["ts"]).isoformat()}'
     h = major_open("recent", f'Recent, most recently touched first <span class="muted rrange">({e(rng)})</span>', "")
-    h += ('<p class="lead">Last week\'s work to pick up: every dashboard, visualisation, article, research page, unfiled page and agent, ordered by its last commit '
+    h += ('<p class="lead">Last week\'s work to pick up: every dashboard, visualisation, article, research page, unfiled page, handover and agent, ordered by its last commit '
           '(file date where there is none). The title jumps to its card below; the arrow opens it directly.</p>')
     h += f'<ul class="recent">{"".join(line(r) for r in top)}</ul>'
     if more: h += f'<details class="more rmore"><summary>show 16 <span class="muted">({len(more)} more from the last fourteen days)</span></summary><ul class="recent">{"".join(line(r) for r in more)}</ul></details>'
@@ -592,9 +597,124 @@ def render_artefacts(view: dict) -> str:
     return h
 
 
-def artefact_jump(view: dict) -> str:
+# ----------------------------------------------------------------------------- handovers
+# Session handover briefs: every Markdown file under ~/Projects whose name contains "handover" (case blind), plus any
+# README or other .md whose first heading contains "handover". Scope: every top-level folder except concierge_skip
+# (the research repo and the vault are walked, as for artefacts), so employer-hidden repos stay hidden. Pruned: the
+# artefact prune list plus Terraform state, agent worktrees, .claude folders (skills, not handovers) and scratchpads;
+# the artefact exclusion list (ART_EXCLUDE) still applies. Dated by the file's last commit; by file time where the
+# file is untracked or has uncommitted edits.
+HO_PRUNE = set(ART_PRUNE_DIRS) | {".terraform", ".claude", "worktrees", "scratchpad", "target", ".mypy_cache", ".ruff_cache"}
+HO_NAME = re.compile(r"(?i)handover")
+QUIET_DAYS = 14
+
+
+def _md_head(text: str) -> tuple[str, str]:
+    """(title, where we are): the first heading, and the first plain line after it (front matter status wins)."""
+    fm, _, body = parse_frontmatter(text)
+    lines = body.splitlines(); title, start = "", 0
+    for n, l in enumerate(lines):
+        m = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", l.strip())
+        if m: title, start = m.group(1).strip(), n + 1; break
+    status = str(fm.get("status") or "").strip() if isinstance(fm, dict) else ""
+    where, fence, para = "", False, []
+    for l in lines[start:]:
+        s = l.strip()
+        if para and (not s or s.startswith(("#", "|", "```", "- ", "* ", "<!--"))): break  # a hard-wrapped line joins its paragraph
+        if s.startswith("```"): fence = not fence; continue
+        if fence or not s or s.startswith(("#", "|", "---", "***", "<!--", "!")): continue
+        para.append(s.lstrip("> ").strip() if para else s)
+        if len(" ".join(para)) > 400: break
+    where = " ".join(para)
+    clean = lambda s: re.sub(r"\s+", " ", re.sub(r"\*\*|__|`|\[\[|\]\]|\[([^\]]+)\]\([^)]*\)", r"\1", s.lstrip("> ").strip())).strip()
+    return clean(title), clean(status or where)
+
+
+def _git_root(p: Path) -> Path | None:
+    for d in (p.parent, *p.parent.parents):
+        if (d / ".git").exists(): return d
+    return None
+
+
+def crawl_handovers(cfg: dict) -> list:
+    """Walk ~/Projects for handover briefs. Derived only; the console flags quiet ones at render time."""
+    home = Path(cfg.get("concierge_artefact_base", "~/Projects")).expanduser().resolve()
+    research = Path(cfg["research"]).expanduser().resolve(); vault = Path(cfg["vault"]).expanduser().resolve(); skip = set(cfg.get("concierge_skip", []))
+    keep = {research, vault}
+    roots = sorted(p for p in home.iterdir() if p.is_dir() and not p.name.startswith(".") and (p.name not in skip or p.resolve() in keep))
+    out = []
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if d not in HO_PRUNE)
+            for fn in filenames:
+                if not fn.lower().endswith(".md"): continue
+                f = Path(dirpath) / fn; rel = os.path.relpath(f, home)
+                if excluded(rel): continue
+                try:
+                    text = f.read_text(encoding="utf-8", errors="replace")[:20000] if HO_NAME.search(fn) else f.read_text(encoding="utf-8", errors="replace")[:4000]
+                except OSError:
+                    continue
+                title, where = _md_head(text)
+                if not HO_NAME.search(fn) and not HO_NAME.search(title): continue
+                if HO_NAME.search(fn) and not text.strip(): continue
+                out.append(_handover(f, rel, title, where, root, research))
+    return sorted(out, key=lambda h: (-h["last_ts"], h["title"].lower()))
+
+
+def _handover(f: Path, rel: str, title: str, where: str, root: Path, research: Path) -> dict:
+    repo = _git_root(f); line = git(repo, "log", "-1", "--format=%ad|%h|%ct|%s", "--date=short", "--", str(f)) if repo else ""
+    dirty = bool(git(repo, "status", "--porcelain", "--", str(f))) if repo and line else False
+    if line and not dirty:
+        date, sha, ts, subj = (line.split("|", 3) + ["", "", "", ""])[:4]; ts = int(ts or 0)
+    else:
+        ts = int(f.stat().st_mtime); date, sha, subj = dt.date.fromtimestamp(ts).isoformat(), "", ""
+    try:
+        under_research = f.resolve().is_relative_to(research)
+    except AttributeError:  # Python < 3.9
+        under_research = str(f.resolve()).startswith(str(research) + os.sep)
+    if under_research:
+        sub = os.path.relpath(f.resolve(), research).split(os.sep)
+        project, ppath = ("research/" + sub[0], research / sub[0]) if len(sub) > 1 else ("research", research)
+    else:
+        project, ppath = root.name, root
+    twin = f.with_suffix(".html")
+    return {"path": str(f), "rel": rel, "title": title or f.stem.replace("-", " "), "where": where[:400], "project": project, "project_path": str(ppath),
+            "in_project": os.path.relpath(f, ppath), "html": str(twin) if twin.exists() else "", "last_touched": date, "last_hash": sha,
+            "last_subject": subj[:160], "last_ts": ts, "committed": bool(sha), "dirty": dirty,
+            "anchor": "h-" + hashlib.sha1(rel.encode()).hexdigest()[:10]}
+
+
+def render_handovers(items: list, now: dt.datetime | None = None) -> str:
+    """The Handovers section: one line per brief, newest first, with where it stands and links to the .md and its .html twin.
+    Briefs untouched for fourteen days carry a quiet tag."""
+    e = lambda s: html.escape(str(s or ""), quote=True); uri = lambda p: "file://" + quote(str(p))
+    now = now or dt.datetime.now(); cutoff = (now - dt.timedelta(days=QUIET_DAYS)).timestamp()
+    quiet = sum(1 for i in items if i["last_ts"] < cutoff)
+
+    def row(i):
+        kinds = f'<a class="kind" href="{e(uri(i["path"]))}" target="_blank" rel="noopener">MD</a>'
+        if i.get("html"): kinds += f' <a class="kind" href="{e(uri(i["html"]))}" target="_blank" rel="noopener">HTML</a>'
+        tag = f'<span class="tag warn" title="not touched for {QUIET_DAYS} days or more">quiet</span>' if i["last_ts"] < cutoff else ""
+        if i.get("last_hash"): when = f'{e(i["last_touched"])} <code title="{e(i["last_subject"])}">{e(i["last_hash"])}</code>'
+        else: when = f'{e(i["last_touched"])} <span class="muted">({"file date, uncommitted edits" if i.get("dirty") else "file date, not in git"})</span>'
+        w = i.get("where") or ""; w = w if len(w) <= 260 else w[:260].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+        where = f'<div class="ablurb">{e(w)}</div>' if w else '<div class="ablurb muted">Where it stands: not stated.</div>'
+        return (f'<li class="aitem" id="{e(i["anchor"])}"><div class="aline"><a class="atitle" href="{e(uri(i["path"]))}" target="_blank" rel="noopener">{e(i["title"])}</a> '
+                f'<span class="kinds">{kinds}</span>{tag}</div>{where}'
+                f'<div class="meta"><a href="{e(uri(i["project_path"]))}">{e(i["project"])}</a> · <code>{e(i["in_project"])}</code> · last updated {when}</div></li>')
+
+    h = (major_open("handovers", "Handovers", len(items), " arts") + '<div class="dtop"><input class="afilter" type="search" placeholder="filter handovers…" '
+         'aria-label="filter handovers" hidden></div>'
+         f'<p class="lead">Every session handover brief across the projects, newest first by last commit (file date where uncommitted). '
+         f'The line under each title is where it stands, from its front matter status or its first line. {quiet} quiet for {QUIET_DAYS} days or more.</p>')
+    if not items: return h + '<p class="muted">No handovers found.</p></details>'
+    return h + f'<ul class="alist">{"".join(row(i) for i in items)}</ul></details>'
+
+
+def artefact_jump(view: dict, handovers: int | None = None) -> str:
     c = lambda k: sum(1 for i in view["items"] if i["category"] == k)
-    return (f'<nav class="jump" aria-label="sections"><a href="#recent">Recent</a><a href="#dashboards">Dashboards</a><a href="#services">Services</a><a href="#visualisations">Visualisations ({c("visualisations")})</a>'
+    ho = f'<a href="#handovers">Handovers ({handovers})</a>' if handovers is not None else ""
+    return (f'<nav class="jump" aria-label="sections"><a href="#recent">Recent</a>{ho}<a href="#dashboards">Dashboards</a><a href="#services">Services</a><a href="#visualisations">Visualisations ({c("visualisations")})</a>'
             f'<a href="#articles">Articles ({c("articles")})</a><a href="#research">Research ({c("research")})</a>'
             f'<a href="#unfiled">Unfiled ({c("unfiled")})</a><a href="#agents">Agents</a></nav>')
 
@@ -624,11 +744,13 @@ def cmd_crawl(a, cfg):
                             "recent": git(root, "log", "-6", "--format=%ad %s", "--date=short", "--", str(proj.relative_to(root))).splitlines(),
                             "is_agent": True, "research_projects": [proj.name], "latest_handover": None, "wiki_pages": wiki_links(cfg, proj.name)})
     art = crawl_artefacts(cfg, [e["path"] for e in entries if not e["id"].startswith("research/")])
-    reg = {"generated": dt.date.today().isoformat(), "entries": entries, "artefacts": art}
+    ho = crawl_handovers(cfg)
+    reg = {"generated": dt.date.today().isoformat(), "entries": entries, "artefacts": art, "handovers": ho}
     sd = state(cfg); (sd / "registry.json").write_text(json.dumps(reg, indent=1, ensure_ascii=False), encoding="utf-8")
     cats = {c: sum(1 for i in art["items"] if i["category"] == c) for c in ("research", "articles", "visualisations", "unfiled")}
     print(f"registry: {len(entries)} entries ({sum(1 for e in entries if e['is_agent'])} with agent artefacts) -> {sd / 'registry.json'}")
     print("artefacts: " + ", ".join(f"{k} {v}" for k, v in cats.items()) + f"; excluded {len(art['excluded'])}")
+    print(f"handovers: {len(ho)} across {len({h['project'] for h in ho})} projects")
 
 
 def cmd_note(a, cfg):
@@ -732,13 +854,14 @@ def themes(cfg: dict) -> list:
 def cmd_console(a, cfg):
     sd = state(cfg); reg = json.loads((sd / "registry.json").read_text(encoding="utf-8")); full = load_overlay(sd); ov = agent_overlay(full)
     dash = dashboards(full); art = artefacts_view(reg.get("artefacts", {}), full)
+    ho = reg["handovers"] if "handovers" in reg else crawl_handovers(cfg)  # a registry from before handovers: derive them now
     data = {"generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "registry": reg["entries"], "overlay": ov, "drift": compute_drift(cfg), "dashboards": dash,
             "streams": research_streams(cfg), "insights": insights(cfg), "themes": themes(cfg),
             "moved": {"vault": git(Path(cfg["vault"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:25],
                       "research": git(Path(cfg["research"]), "log", "--since=7 days ago", "--format=%ad %s", "--date=short").splitlines()[:40]},
             "stages": cfg.get("concierge_stages", ["idea", "spec", "prototype", "harness", "sandbox", "pilot", "production", "parked"])}
     tpl = (HERE.parent / "templates" / "console.html").read_text(encoding="utf-8")
-    out = tpl.replace("<!--__JUMP__-->", artefact_jump(art)).replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("<!--__RECENT__-->", render_recent(recent_items(dash, art, reg["entries"], ov))).replace("<!--__ARTEFACTS__-->", render_artefacts(art)).replace("<!--__AGENTS__-->", major_open("agents", "Agents", f"{sum(1 for x in reg['entries'] if x['is_agent'])} of {len(reg['entries'])} repos", h2cls="break")).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
+    out = tpl.replace("<!--__JUMP__-->", artefact_jump(art, len(ho))).replace("<!--__HANDOVERS__-->", render_handovers(ho)).replace("<!--__DASHBOARDS__-->", render_dashboards(dash)).replace("<!--__RECENT__-->", render_recent(recent_items(dash, art, reg["entries"], ov, ho))).replace("<!--__ARTEFACTS__-->", render_artefacts(art)).replace("<!--__AGENTS__-->", major_open("agents", "Agents", f"{sum(1 for x in reg['entries'] if x['is_agent'])} of {len(reg['entries'])} repos", h2cls="break")).replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     target = Path(a.out).expanduser() if a.out else sd / "console.html"
     target.write_text(out, encoding="utf-8"); print(f"console -> {target}")
 

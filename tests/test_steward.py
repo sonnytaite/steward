@@ -331,6 +331,39 @@ class ConciergeTests(Fixture):
         self.assertIn('href="#agents" data-target="g-ag" data-agent="ag"', h)
         self.assertIn('href="#d-dash"', h); self.assertNotIn(">Old<", h)
 
+    def test_handovers_crawl_rules_and_render(self):
+        m = self._mod(); home = Path(tempfile.mkdtemp()); self.cfg["concierge_artefact_base"] = str(home)
+        research = home / "research"; vault = home / "second-brain"; self.cfg["research"] = str(research); self.cfg["vault"] = str(vault)
+        self.cfg["concierge_skip"] = ["research", "second-brain", "healthX"]
+        for d in (research / "proj", vault, home / "app" / "docs", home / "app" / "node_modules" / "x", home / "app" / ".claude" / "worktrees" / "w", home / "healthX"):
+            d.mkdir(parents=True, exist_ok=True)
+        (research / "proj" / "2026-09-01-session-handover.md").write_text("# Session handover: proj\n\n```\nbox\n```\nRead this and you\nare current.\n\nMore.\n")
+        (research / "proj" / "2026-09-01-session-handover.html").write_text("<html><title>x</title></html>")
+        (vault / "HANDOVER.md").write_text("---\nstatus: paused, waiting on Sonny\n---\n# Handover: vault\n\nFirst line.\n")
+        (home / "app" / "README.md").write_text("# Handover notes for app\n\n> Where it is.\n")
+        (home / "app" / "docs" / "plan.md").write_text("# Plan\n\nNothing about it.\n")
+        (home / "app" / "node_modules" / "x" / "handover.md").write_text("# Handover\n")
+        (home / "app" / ".claude" / "worktrees" / "w" / "HANDOVER.md").write_text("# Handover\n")
+        (home / "healthX" / "HANDOVER.md").write_text("# Handover\n")
+        subprocess.run(["git", "init", "-q", str(research)], check=True); subprocess.run(["git", "-C", str(research), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(research), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], check=True)
+        ho = m.crawl_handovers(self.cfg)
+        self.assertEqual(sorted(h["rel"] for h in ho), ["app/README.md", "research/proj/2026-09-01-session-handover.md", "second-brain/HANDOVER.md"])
+        by = {h["rel"]: h for h in ho}
+        r = by["research/proj/2026-09-01-session-handover.md"]
+        self.assertEqual((r["project"], r["where"], r["committed"]), ("research/proj", "Read this and you are current.", True))
+        self.assertTrue(r["html"].endswith(".html"))
+        self.assertEqual(by["second-brain/HANDOVER.md"]["where"], "paused, waiting on Sonny")  # front matter status wins
+        self.assertEqual((by["app/README.md"]["where"], by["app/README.md"]["committed"]), ("Where it is.", False))
+        now = dt.datetime.fromtimestamp(max(h["last_ts"] for h in ho)) + dt.timedelta(days=20)
+        h = m.render_handovers(ho, now)
+        self.assertIn('<details class="major arts" id="handovers" open><summary><h2>Handovers', h)
+        self.assertEqual(h.count('class="tag warn"'), 3); self.assertIn(">HTML</a>", h)
+        for i in ho: self.assertIn(f'id="{i["anchor"]}"', h)
+        self.assertIn('href="#handovers">Handovers (3)', m.artefact_jump({"items": []}, 3))
+        rec = m.recent_items([], {"items": []}, [], {}, ho)
+        self.assertEqual({x["kind"] for x in rec}, {"handover"}); self.assertIn('class="tag rk rk-handover">Handover', m.render_recent(rec, now))
+
     def test_brief_facts_carry_drift(self):
         self.test_note_then_drift()
         self.assertIn("registry_drift", steward.build_facts(self.cfg, TODAY))
