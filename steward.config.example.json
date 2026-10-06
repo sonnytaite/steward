@@ -12,8 +12,7 @@
   ],
   "concierge_skip": [
     "research",
-    "second-brain",
-    "vault-personal"
+    "second-brain"
   ],
   "concierge_include": [
     "steward",
