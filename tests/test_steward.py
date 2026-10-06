@@ -83,7 +83,7 @@ class Fixture(unittest.TestCase):
         (self.research / "proj" / "README.md").write_text("# Proj\n\n## Decisions for Sonny\n\n1. Do A or B?\n2. Ship now?\n\n## Decisions already made (do not relitigate)\n\n1. settled\n\n## Other\n\n- not a decision\n")
         (wiki / "projects" / "esc.md").write_text(page("Esc", "2026-09-15", body="escaped link [[concepts/hub\\]] here", type_="project"))
         self.cfg = dict(steward.DEFAULT_CONFIG)
-        self.cfg.update({"vault": str(self.vault), "research": str(self.research), "kete_aronui": str(root / "nope")})
+        self.cfg.update({"vault": str(self.vault), "research": str(self.research), "session_memory": str(root / "nope")})
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -260,10 +260,10 @@ class ConciergeTests(Fixture):
 
     def test_artefact_exclusions(self):
         m = self._mod()
-        for rel in ("second-brain/surfaces/steward/concierge/console.html", "steward/templates/console.html", "org-atlas/static/index.html",
-                    "estate-console/static/index.html", "research/a/map_template.html", "x/thought piece v1 backup.html", "pia-plus/ui/index.html"):
+        for rel in ("vault/surfaces/steward/concierge/console.html", "steward/templates/console.html", "atlas-app/static/index.html",
+                    "console-app/static/index.html", "research/a/map_template.html", "x/thought piece v1 backup.html", "tool-x/ui/index.html"):
             self.assertTrue(m.excluded(rel), rel)
-        for rel in ("research/a/readme.html", "worx-ai-triage/views/board.html", "research/b/sources.html"):
+        for rel in ("research/a/readme.html", "triage-app/views/board.html", "research/b/sources.html"):
             self.assertEqual(m.excluded(rel), "", rel)
         self.assertIn("node_modules", m.ART_PRUNE_DIRS); self.assertIn("dify-src", m.ART_PRUNE_DIRS)
 

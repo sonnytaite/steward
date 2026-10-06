@@ -31,5 +31,7 @@
   ],
   "concierge_scope_labels": {
     "employer": "employer work"
-  }
+  },
+  "session_memory": "",
+  "concierge_art_exclude": []
 }

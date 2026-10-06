@@ -13,7 +13,7 @@
   │     rails/steward.py ✔ facts · wake · dispose · log · shield
   │     agents           ✔ critic (read-only) · dissenter (read-only)
   │     state            → surfaces/steward/ in the vault
-  └─ kete-aronui         ◐ session memory (desktop machines only today)
+  └─ session memory      ◐ optional, your own, named in the config
   ──────────────────────────────────────────────
   Gate: keep / act / drop, append-only. Test: 100 days.
 ```

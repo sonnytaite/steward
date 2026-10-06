@@ -297,18 +297,14 @@ ART_PRUNE_DIRS = {  # folder names never walked
     "_style": "house style files", "source-project-for-review-only": "vendored copy of another repo",
 }
 ART_QUIET = {"dependencies", "virtualenv", "git internals", "cache", "editor config"}  # pruned without listing each folder
-ART_EXCLUDE = [  # (regex on the path relative to ~/Projects, reason); first match wins
-    (r"^second-brain/surfaces/steward/concierge/console\.html$", "the concierge's own console"),
+ART_EXCLUDE = [  # (regex on the path relative to the artefact base, reason); first match wins. Personal rules are
+    # added from config "concierge_art_exclude": [[regex, reason], ...] at startup, ahead of these generic ones.
     (r"^steward/templates/", "concierge template"),
-    (r"^org-atlas/(static|images?|snapshots?)/", "org-atlas app shell and images, served by atlas serve"),
-    (r"^estate-console/static/", "estate console app shell, served by console.py"),
+    (r"/surfaces/steward/concierge/console\.html$", "the concierge's own console"),
     (r"^[^/]+/(static|web|ui|public|app|src)/index\.html$", "app shell, needs its server (see Dashboards)"),
-    (r"^whakapapa-kete/sources/published/", "published source texts the kete ingests, not made for Sonny"),
     (r"/data/(derived|raw)/", "data folder: downloads and generated fragments"),
     (r"(?i)(^|/)[^/]*template[^/]*\.(html?|pdf)$", "template file"),
     (r"(?i)(^|/)[^/]*[ ._-](backup|bak|old|copy)(\.[^/.]+)?\.html?$", "backup copy of another page"),
-    (r"^cisra/CIS_Controls_Guide[^/]*\.pdf$", "third-party reference document (CIS Controls guide)"),
-    (r"^drptool/nist\.sp\.[^/]*\.pdf$", "third-party reference document (NIST SP 800-184)"),
 ]
 VIS_WORDS = re.compile(r"(?i)\b(atlas|dashboards?|maps?|charts?|workforce|scoreboards?|heat ?maps?|graphs?|visuali[sz](?:ation|er)s?|fleet view|radar|board)\b")
 CHART_LIB = re.compile(r"(?is)<script[^>]+src=[\"'][^\"']*(chart(?:\.umd)?(?:\.min)?\.js|chart\.js|/d3(?:@|\.v\d|\.min|\.js)|echarts|plotly|vega|leaflet|mapbox|highcharts|apexcharts|cytoscape|vis-network|mermaid)")
@@ -885,6 +881,7 @@ def main(argv=None):
     r = sub.add_parser("art"); r.add_argument("--path", required=True); [r.add_argument(f"--{k}") for k in ("category", "title", "blurb", "why", "data", "by")]
     a = ap.parse_args(argv); cfg = load_config(a.config)
     SCOPE_LABELS.update(cfg.get("concierge_scope_labels", {}))
+    ART_EXCLUDE[:0] = [(rx, why) for rx, why in cfg.get("concierge_art_exclude", [])]
     {"crawl": cmd_crawl, "note": cmd_note, "art": cmd_art, "where": cmd_where, "console": cmd_console, "drift": cmd_drift}[a.cmd](a, cfg)
 
 

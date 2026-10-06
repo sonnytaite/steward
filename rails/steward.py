@@ -49,7 +49,7 @@ DEFAULT_CONFIG = {
     "ordinary_min_age_days": 30,
     "max_items": 5,
     "wake_char_limit": 3000,
-    "kete_aronui": "~/claudecode/kete-aronui",
+    "session_memory": "",  # optional: a folder of session memory the brief may mention; empty means none
 }
 
 LINK_RE = re.compile(r"\[\[([^\]|#\\]+)(?:[#|][^\]]*)?\\?\]\]")
@@ -72,7 +72,7 @@ def load_config(path: str | None) -> dict:
             cfg.update(json.loads(c.read_text(encoding="utf-8")))
             cfg["_config_path"] = str(c)
             break
-    for k in ("vault", "research", "kete_aronui"):
+    for k in ("vault", "research", "session_memory"):
         cfg[k] = str(Path(cfg[k]).expanduser())
     return cfg
 
@@ -324,7 +324,7 @@ def build_facts(cfg: dict, today: dt.date | None = None) -> dict:
 
     shielded = {"full": [p for p, pg in pages.items() if pg["shield"] == "full"], "partial": [p for p, pg in pages.items() if pg["shield"] == "partial"]}
 
-    kete = Path(cfg["kete_aronui"])
+    mem = Path(cfg["session_memory"]).expanduser() if cfg.get("session_memory") else None
     facts = {
         "date": today.isoformat(),
         "vault": cfg["vault"],
@@ -341,7 +341,7 @@ def build_facts(cfg: dict, today: dt.date | None = None) -> dict:
         "recent": recent[:15],
         "ordinary_sample": ordinary,
         "prior": {"dispositions": prior_dispositions(sd)["tally"], "pending": pending_verdicts(sd)},
-        "kete_aronui": {"path": str(kete), "present": kete.exists()},
+        "session_memory": {"path": str(mem) if mem else "", "present": bool(mem and mem.exists())},
         "registry_drift": _registry_drift(cfg, today),
         "bounds": {"max_items": cfg["max_items"], "read_budget_files": 12, "passes": 1},
     }
@@ -351,7 +351,7 @@ def build_facts(cfg: dict, today: dt.date | None = None) -> dict:
 def facts_markdown(f: dict) -> str:
     out = [f"# Steward facts — {f['date']}", "",
            f"Vault {f['vault']} · {f['pages']} pages · shielded full {len(f['shielded']['full'])}, partial {len(f['shielded']['partial'])}",
-           f"Research {f['research']} · kete-aronui present: {f['kete_aronui']['present']}", ""]
+           f"Research {f['research']} · session memory present: {f['session_memory']['present']}", ""]
     def sec(title, rows, fmt):
         out.append(f"## {title} ({len(rows)})")
         out.extend(fmt(r) for r in rows) if rows else out.append("- none")
