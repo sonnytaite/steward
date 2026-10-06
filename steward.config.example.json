@@ -1,5 +1,5 @@
 {
-  "vault": "~/Projects/second-brain",
+  "vault": "~/vaults/work",
   "research": "~/Projects/research",
   "state_dir": "surfaces/steward",
   "stale_days": 60,
@@ -7,25 +7,17 @@
   "decision_window_days": 30,
   "git_window_days": 7,
   "max_items": 5,
-  "kete_aronui": "~/claudecode/kete-aronui",
   "concierge_roots": [
     "~/Projects"
   ],
   "concierge_skip": [
     "research",
     "second-brain",
-    "vault-personal",
-    "healthx-commons",
-    "healthX",
-    "og-docs",
-    "paperclip-agent-configs"
+    "vault-personal"
   ],
   "concierge_include": [
     "steward",
-    "surface-plugin",
-    "kete-aronui",
-    "tars",
-    "keeper-environmental-intelligence-platform"
+    "surface-plugin"
   ],
   "concierge_stages": [
     "idea",
@@ -36,5 +28,8 @@
     "pilot",
     "production",
     "parked"
-  ]
+  ],
+  "concierge_scope_labels": {
+    "employer": "employer work"
+  }
 }

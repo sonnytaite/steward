@@ -334,8 +334,8 @@ class ConciergeTests(Fixture):
     def test_handovers_crawl_rules_and_render(self):
         m = self._mod(); home = Path(tempfile.mkdtemp()); self.cfg["concierge_artefact_base"] = str(home)
         research = home / "research"; vault = home / "second-brain"; self.cfg["research"] = str(research); self.cfg["vault"] = str(vault)
-        self.cfg["concierge_skip"] = ["research", "second-brain", "healthX"]
-        for d in (research / "proj", vault, home / "app" / "docs", home / "app" / "node_modules" / "x", home / "app" / ".claude" / "worktrees" / "w", home / "healthX"):
+        self.cfg["concierge_skip"] = ["research", "second-brain", "employer-app"]
+        for d in (research / "proj", vault, home / "app" / "docs", home / "app" / "node_modules" / "x", home / "app" / ".claude" / "worktrees" / "w", home / "employer-app"):
             d.mkdir(parents=True, exist_ok=True)
         (research / "proj" / "2026-09-01-session-handover.md").write_text("# Session handover: proj\n\n```\nbox\n```\nRead this and you\nare current.\n\nMore.\n")
         (research / "proj" / "2026-09-01-session-handover.html").write_text("<html><title>x</title></html>")
@@ -344,7 +344,7 @@ class ConciergeTests(Fixture):
         (home / "app" / "docs" / "plan.md").write_text("# Plan\n\nNothing about it.\n")
         (home / "app" / "node_modules" / "x" / "handover.md").write_text("# Handover\n")
         (home / "app" / ".claude" / "worktrees" / "w" / "HANDOVER.md").write_text("# Handover\n")
-        (home / "healthX" / "HANDOVER.md").write_text("# Handover\n")
+        (home / "employer-app" / "HANDOVER.md").write_text("# Handover\n")
         subprocess.run(["git", "init", "-q", str(research)], check=True); subprocess.run(["git", "-C", str(research), "add", "."], check=True)
         subprocess.run(["git", "-C", str(research), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], check=True)
         ho = m.crawl_handovers(self.cfg)

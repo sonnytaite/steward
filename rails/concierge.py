@@ -215,6 +215,15 @@ def major_open(sid: str, name: str, n, extra: str = "", h2cls: str = "") -> str:
     return f'<details class="major{extra}" id="{sid}" open><summary><h2{f" class={h2cls}" if h2cls else ""}>{name}{cnt}</h2></summary>'
 
 
+SCOPE_LABELS: dict = {}  # set from config "concierge_scope_labels": {"<scope>": "<label>"}; an unlabelled scope shows its own name
+
+
+def scope_tag(scope: str, lead: str = "") -> str:
+    """A warning tag for a scoped record (for example work that belongs to an employer), or nothing."""
+    if not scope: return ""
+    return f'{lead}<span class="tag warn">{html.escape(str(SCOPE_LABELS.get(scope, scope)), quote=True)}</span>'
+
+
 def render_dashboards(items: list) -> str:
     """Static HTML for the Dashboards section, so it renders even when scripts are blocked; the script adds live status."""
     e = lambda s: html.escape(str(s or ""), quote=True)
@@ -231,20 +240,20 @@ def render_dashboards(items: list) -> str:
         return f'{e(d["last_touched"])} <code title="{e(d["last_subject"])}">{e(d["last_hash"])}</code>'
 
     def dcard(d):
-        hnz = '<span class="tag warn">Health NZ work</span>' if d.get("scope") == "hnz" else ""
+        scoped = scope_tag(d.get("scope", ""))
         setup = f'<div class="meta">first time: <code>{e(d["setup"])}</code></div>' if d.get("setup") else ""
         note = f'<div class="meta">{e(d["note"])}</div>' if d.get("note") else ""
         repo = f' · <code>{e(d["repo"])}</code>' if d.get("repo") else ""
         nxt = f'<p><b>Next:</b> {e(d["next"])}</p>' if d.get("next") else '<p class="muted">Next: not recorded</p>'
         return (f'<div class="card dash" id="{e(dash_anchor(d))}" data-url="{e(d["url"])}"><div class="dhead"><h3>{e(d["name"])}</h3>{status(d)}</div>'
-                f'<div class="meta"><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a> {hnz}</div>'
+                f'<div class="meta"><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a> {scoped}</div>'
                 f'<div class="cmdrow"><pre class="cmd">{e(cmd(d))}</pre><button class="copy" type="button" title="copy the start command">copy</button></div>{setup}'
                 f'<p>{e(d.get("what"))} {e(d.get("why"))}</p>{nxt}{note}'
                 f'<div class="meta">last touched {touched(d)}{repo}</div></div>')
 
     def row(d):
-        hnz = ' <span class="tag warn">Health NZ work</span>' if d.get("scope") == "hnz" else ""
-        return (f'<tr id="{e(dash_anchor(d))}"><td><b>{e(d["name"])}</b>{hnz}</td><td><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a></td>'
+        scoped = scope_tag(d.get("scope", ""), " ")
+        return (f'<tr id="{e(dash_anchor(d))}"><td><b>{e(d["name"])}</b>{scoped}</td><td><a href="{e(d["url"])}" target="_blank" rel="noopener">{e(d["url"])}</a></td>'
                 f'<td><code>{e(cmd(d))}</code></td><td>{e(d.get("what"))}</td><td class="muted">{touched(d)}</td></tr>')
 
     dash = [d for d in items if d.get("kind", "dashboard") == "dashboard"]
@@ -266,10 +275,10 @@ def render_dashboards(items: list) -> str:
 
 
 # ----------------------------------------------------------------------------- artefacts
-# Research, Articles and Visualisations: the rendered pages (HTML, and PDF beside them) Sonny has had made and can open.
+# Research, Articles and Visualisations: the rendered pages (HTML, and PDF beside them) the owner has had made and can open.
 # Scope: the known set (every repo the crawl registers, the overlay's agents and the _dashboards repos) plus the whole
-# research repo and the vault's share folder. The concierge_skip rules still apply, so Health NZ and private trees
-# (healthX, healthx-commons, vault-personal, og-docs, ...) are never read.
+# research repo and the vault's share folder. The concierge_skip rules still apply, so employer and private trees
+# named there are never read.
 #
 # Rules, first match wins (classify): under the research repo -> research; under the vault's share folder (surface
 # share_dir), a briefs/digests/packs path or a *-pack folder, or a sibling .md whose front matter type is brief, article,
@@ -418,7 +427,7 @@ def crawl_artefacts(cfg: dict, repos: list) -> dict:
     roots = sorted(r for r in roots if r.name not in skip or r in (research.resolve(), vault.resolve()))
     dash_files = {str(Path(d["url"][len("file://"):]).expanduser()) for d in ov.get("_dashboards", []) if d.get("url", "").startswith("file://")}
     dash_files |= {str(Path(d["repo"]).expanduser() / "index.html") for d in ov.get("_dashboards", []) if d.get("repo") and d.get("url", "").startswith("http")}
-    hnz = {Path(d["repo"]).expanduser().resolve().name for d in ov.get("_dashboards", []) if d.get("scope") == "hnz" and d.get("repo")}
+    scoped = {Path(d["repo"]).expanduser().resolve().name: d["scope"] for d in ov.get("_dashboards", []) if d.get("scope") and d.get("repo")}  # repo name -> scope
     items, excl, pruned = [], [], {}
     for root in roots:
         files = []
@@ -446,11 +455,11 @@ def crawl_artefacts(cfg: dict, repos: list) -> dict:
             if not why and facts["fragment"]: why = "HTML fragment (no html, body or title)"
             if why: excl.append({"path": rel, "reason": why}); continue
             pdf = pdfs.get((f.parent, f.stem)); paired.add(pdf) if pdf else None
-            items.append(_artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_prefix, hnz, home))
+            items.append(_artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_prefix, scoped, home))
         for pdf in sorted(set(pdfs.values()) - paired):
             rel = rel_of(pdf); why = excluded(rel)
             if why: excl.append({"path": rel, "reason": why}); continue
-            items.append(_artefact(pdf, rel, {"title": pdf_title(pdf), "blurb": "", "fragment": False}, None, root, gi, research, research_prefix, share_prefix, hnz, home))
+            items.append(_artefact(pdf, rel, {"title": pdf_title(pdf), "blurb": "", "fragment": False}, None, root, gi, research, research_prefix, share_prefix, scoped, home))
     rgi = git_index(research)
     projects = {i["group"] for i in items if i["category"] == "research" and i.get("group")}
     rp = {n: research_project_facts(research, n, rgi) for n in sorted(projects)}
@@ -461,7 +470,7 @@ def crawl_artefacts(cfg: dict, repos: list) -> dict:
     return {"items": items, "excluded": excl, "research_projects": rp}
 
 
-def _artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_prefix, hnz, home) -> dict:
+def _artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_prefix, scoped, home) -> dict:
     md = md_facts(f.with_suffix(".md"))
     if not md and f.name.lower() == "readme.html": md = {"blurb": first_para((f.parent / "README.md").read_text(encoding="utf-8", errors="replace"))[:300]} if (f.parent / "README.md").exists() else {}
     cat, rule = classify(rel, facts, md, research_prefix, share_prefix)
@@ -486,7 +495,7 @@ def _artefact(f, rel, facts, pdf, root, gi, research, research_prefix, share_pre
             "blurb": md.get("blurb") or facts.get("blurb", ""), "date": md.get("date") or (DATE_IN_NAME.search(f.name).group(1) if DATE_IN_NAME.search(f.name) else ""),
             "category": cat, "rule": rule, "group": group, "project": project, "project_path": ppath, "pdf": str(pdf) if pdf else "",
             "data": data, "last_touched": date, "last_hash": sha, "last_ts": ts, "anchor": "a-" + hashlib.sha1(rel.encode()).hexdigest()[:10], "last_subject": subj, "committed": committed, "size": f.stat().st_size,
-            "scope": "hnz" if root.name in hnz else "", "looks_visual": vis}
+            "scope": scoped.get(root.name, ""), "looks_visual": vis}
 
 
 def artefacts_view(reg_art: dict, ov: dict) -> dict:
@@ -524,7 +533,7 @@ def render_artefacts(view: dict) -> str:
         return a, " ".join(kinds)
 
     def tags(i):
-        t = '<span class="tag warn">Health NZ work</span>' if i.get("scope") == "hnz" else ""
+        t = scope_tag(i.get("scope", ""))
         if i.get("looks_visual") and i["category"] == "research": t += f'<span class="tag" title="passes the visualisation test: {e(i["looks_visual"])}">visual</span>'
         return t + (f'<span class="tag ok" title="overlay record {e(i.get("overlay_updated"))} by {e(i.get("overlay_by"))}">overlay</span>' if "overlay_by" in i else "")
 
@@ -875,6 +884,7 @@ def main(argv=None):
     c = sub.add_parser("console"); c.add_argument("--out")
     r = sub.add_parser("art"); r.add_argument("--path", required=True); [r.add_argument(f"--{k}") for k in ("category", "title", "blurb", "why", "data", "by")]
     a = ap.parse_args(argv); cfg = load_config(a.config)
+    SCOPE_LABELS.update(cfg.get("concierge_scope_labels", {}))
     {"crawl": cmd_crawl, "note": cmd_note, "art": cmd_art, "where": cmd_where, "console": cmd_console, "drift": cmd_drift}[a.cmd](a, cfg)
 
 
